@@ -352,12 +352,17 @@ export const VirtualKeyboard: React.FC<VirtualKeyboardProps> = ({
             {keyboardRows.map((row, rIdx) => (
               <div key={rIdx} className="grid grid-cols-10 gap-1 sm:gap-2">
                 {row.map((char) => {
-                  const isCurrentActive = stickyFocusedKey === char || hoveredDwellId === `char-${char}`;
+                  const dwellKeyId = `char-${char}`;
+                  const isCurrentActive =
+                    stickyFocusedKey === char ||
+                    stickyFocusedKey === dwellKeyId ||
+                    hoveredDwellId === dwellKeyId ||
+                    hoveredDwellId === char;
 
                   return (
                     <button
                       key={char}
-                      data-dwell-id={`char-${char}`}
+                      data-dwell-id={dwellKeyId}
                       data-keyboard-key={char}
                       onClick={() => onKeyType(char)}
                       className={`h-11 sm:h-14 md:h-15 rounded-lg sm:rounded-xl border text-base sm:text-xl font-semibold flex flex-col items-center justify-center relative overflow-hidden transition-colors ${

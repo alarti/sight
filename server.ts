@@ -10,7 +10,24 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '512kb' }));
+
+const TTS_MAX_TEXT_LENGTH = 600;
+const TTS_RATE_LIMIT_WINDOW_MS = 60_000;
+const TTS_MAX_REQUESTS_PER_WINDOW = 30;
+const ttsRequestLog = new Map<string, number[]>();
+
+function isRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const recent = (ttsRequestLog.get(ip) || []).filter(ts => now - ts < TTS_RATE_LIMIT_WINDOW_MS);
+  if (recent.length >= TTS_MAX_REQUESTS_PER_WINDOW) {
+    ttsRequestLog.set(ip, recent);
+    return true;
+  }
+  recent.push(now);
+  ttsRequestLog.set(ip, recent);
+  return false;
+}
 
 // Shared Google Gen AI client for server-side neural speech synthesis
 let aiClient: GoogleGenAI | null = null;
@@ -46,6 +63,14 @@ app.get('/api/tts/status', (_req, res) => {
  * Generates human-grade conversational speech with breath, prosody, and natural warmth.
  */
 app.post('/api/tts', async (req, res) => {
+  const clientIp = req.ip || req.socket.remoteAddress || 'local';
+  if (isRateLimited(clientIp)) {
+    return res.status(429).json({
+      error: 'Too many TTS synthesis requests. Please wait briefly.',
+      fallback: true,
+    });
+  }
+
   const { 
     text, 
     language = 'es', 
@@ -55,10 +80,17 @@ app.post('/api/tts', async (req, res) => {
     detectedTimbre,
     formants,
     speechRate,
-  } = req.body;
+  } = req.body || {};
 
-  if (!text || typeof text !== 'string') {
+  if (!text || typeof text !== 'string' || !text.trim()) {
     return res.status(400).json({ error: 'Text is required for TTS synthesis.' });
+  }
+
+  if (text.trim().length > TTS_MAX_TEXT_LENGTH) {
+    return res.status(400).json({
+      error: `Text exceeds maximum allowed length of ${TTS_MAX_TEXT_LENGTH} characters.`,
+      fallback: true,
+    });
   }
 
   // Re-check client in case environment variable was injected dynamically

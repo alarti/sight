@@ -8,6 +8,133 @@ import { CalibrationSample, UserProfile, VoiceProfile } from './types/index.ts';
 export type { CalibrationSample, UserProfile, VoiceProfile };
 
 const STORAGE_KEY = 'ela_eye_user_profiles_v1';
+const IDB_NAME = 'ela_voice_audio_db_v1';
+const IDB_STORE = 'voice_audio_blobs';
+const IDB_PREFIX = 'idb://voice-audio/';
+
+const memoryAudioCache = new Map<string, string>();
+
+function openVoiceAudioDb(): Promise<IDBDatabase | null> {
+  if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+  return new Promise((resolve) => {
+    try {
+      const req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(IDB_STORE)) {
+          db.createObjectStore(IDB_STORE);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => resolve(null);
+    } catch (err) {
+      console.debug('IndexedDB unavailable:', err);
+      resolve(null);
+    }
+  });
+}
+
+async function putAudioInIdb(key: string, dataUrl: string): Promise<void> {
+  memoryAudioCache.set(key, dataUrl);
+  const db = await openVoiceAudioDb();
+  if (!db) return;
+  await new Promise<void>((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(dataUrl, key);
+      tx.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      tx.onerror = () => {
+        db.close();
+        resolve();
+      };
+    } catch (err) {
+      console.debug('IndexedDB write skipped:', err);
+      db.close();
+      resolve();
+    }
+  });
+}
+
+async function getAudioFromIdb(key: string): Promise<string | null> {
+  if (memoryAudioCache.has(key)) {
+    return memoryAudioCache.get(key) || null;
+  }
+  const db = await openVoiceAudioDb();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).get(key);
+      req.onsuccess = () => {
+        const val = typeof req.result === 'string' ? req.result : null;
+        if (val) memoryAudioCache.set(key, val);
+        db.close();
+        resolve(val);
+      };
+      req.onerror = () => {
+        db.close();
+        resolve(null);
+      };
+    } catch (err) {
+      console.debug('IndexedDB read skipped:', err);
+      db.close();
+      resolve(null);
+    }
+  });
+}
+
+/**
+ * Asynchronously hydrates any IndexedDB audio references (`idb://voice-audio/...`)
+ * back into full playable Data URLs on loaded profiles.
+ */
+export async function hydrateProfilesAudioFromIndexedDB(profiles: UserProfile[]): Promise<UserProfile[]> {
+  let changed = false;
+  const hydrated = await Promise.all(
+    profiles.map(async (prof) => {
+      const vp = prof.voiceProfile;
+      if (!vp) return prof;
+      let nextVp = { ...vp };
+      let vpChanged = false;
+
+      if (nextVp.recordedAudioUrl && nextVp.recordedAudioUrl.startsWith(IDB_PREFIX)) {
+        const key = nextVp.recordedAudioUrl.slice(IDB_PREFIX.length);
+        const restored = await getAudioFromIdb(key);
+        if (restored) {
+          nextVp.recordedAudioUrl = restored;
+          vpChanged = true;
+        }
+      }
+
+      if (Array.isArray(nextVp.bankedPhrases) && nextVp.bankedPhrases.length > 0) {
+        const nextBank = await Promise.all(
+          nextVp.bankedPhrases.map(async (bp) => {
+            if (bp.audioUrl && bp.audioUrl.startsWith(IDB_PREFIX)) {
+              const key = bp.audioUrl.slice(IDB_PREFIX.length);
+              const restored = await getAudioFromIdb(key);
+              if (restored) {
+                vpChanged = true;
+                return { ...bp, audioUrl: restored };
+              }
+            }
+            return bp;
+          })
+        );
+        nextVp.bankedPhrases = nextBank;
+      }
+
+      if (vpChanged) {
+        changed = true;
+        return { ...prof, voiceProfile: nextVp };
+      }
+      return prof;
+    })
+  );
+
+  return changed ? hydrated : profiles;
+}
 
 export function loadProfiles(): UserProfile[] {
   try {
@@ -17,27 +144,85 @@ export function loadProfiles(): UserProfile[] {
     }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      return parsed.map(p => ({
-        ...p,
-        sensitivityX: typeof p.sensitivityX === 'number' ? p.sensitivityX : 14.0,
-        sensitivityY: typeof p.sensitivityY === 'number' ? p.sensitivityY : 14.0,
-        invertY: typeof p.invertY === 'boolean' ? p.invertY : false,
-        cursorControlMode: p.cursorControlMode || 'bayesian-lock',
-        sensorFusionEnabled: typeof p.sensorFusionEnabled === 'boolean' ? p.sensorFusionEnabled : true,
-        samples: Array.isArray(p.samples) ? p.samples : [],
-      }));
+      return parsed.map(p => {
+        const vp = p.voiceProfile ? { ...p.voiceProfile } : undefined;
+        if (vp?.recordedAudioUrl?.startsWith(IDB_PREFIX)) {
+          const cached = memoryAudioCache.get(vp.recordedAudioUrl.slice(IDB_PREFIX.length));
+          if (cached) vp.recordedAudioUrl = cached;
+        }
+        if (vp && Array.isArray(vp.bankedPhrases)) {
+          vp.bankedPhrases = vp.bankedPhrases.map((bp: { id: string; phrase: string; audioUrl: string; recordedAt: number }) => {
+            if (bp.audioUrl?.startsWith(IDB_PREFIX)) {
+              const cached = memoryAudioCache.get(bp.audioUrl.slice(IDB_PREFIX.length));
+              if (cached) return { ...bp, audioUrl: cached };
+            }
+            return bp;
+          });
+        }
+        return {
+          ...p,
+          sensitivityX: typeof p.sensitivityX === 'number' ? p.sensitivityX : 14.0,
+          sensitivityY: typeof p.sensitivityY === 'number' ? p.sensitivityY : 14.0,
+          invertY: typeof p.invertY === 'boolean' ? p.invertY : false,
+          dwellTimeMs: typeof p.dwellTimeMs === 'number' ? p.dwellTimeMs : 1200,
+          isAdaptiveDwellEnabled: typeof p.isAdaptiveDwellEnabled === 'boolean' ? p.isAdaptiveDwellEnabled : true,
+          isStickyKeyboardEnabled: typeof p.isStickyKeyboardEnabled === 'boolean' ? p.isStickyKeyboardEnabled : true,
+          cursorControlMode: p.cursorControlMode || 'bayesian-lock',
+          sensorFusionEnabled: typeof p.sensorFusionEnabled === 'boolean' ? p.sensorFusionEnabled : true,
+          samples: Array.isArray(p.samples) ? p.samples : [],
+          voiceProfile: vp,
+        };
+      });
     }
     return [];
   } catch (e) {
+    console.warn('Error loading profiles from localStorage:', e);
     return [];
   }
 }
 
 export function saveProfiles(profiles: UserProfile[]) {
+  // Offload large audio DataURLs (> 16 KB) into IndexedDB and keep lightweight pointers in localStorage
+  const compactProfiles = profiles.map((prof) => {
+    const vp = prof.voiceProfile;
+    if (!vp) return prof;
+    let nextVp = { ...vp };
+
+    if (nextVp.recordedAudioUrl && nextVp.recordedAudioUrl.startsWith('data:audio') && nextVp.recordedAudioUrl.length > 16_384) {
+      const key = `${prof.id}_recorded`;
+      void putAudioInIdb(key, nextVp.recordedAudioUrl);
+      nextVp.recordedAudioUrl = `${IDB_PREFIX}${key}`;
+    }
+
+    if (Array.isArray(nextVp.bankedPhrases) && nextVp.bankedPhrases.length > 0) {
+      nextVp.bankedPhrases = nextVp.bankedPhrases.map((bp) => {
+        if (bp.audioUrl && bp.audioUrl.startsWith('data:audio') && bp.audioUrl.length > 16_384) {
+          const key = `${prof.id}_bank_${bp.id}`;
+          void putAudioInIdb(key, bp.audioUrl);
+          return { ...bp, audioUrl: `${IDB_PREFIX}${key}` };
+        }
+        return bp;
+      });
+    }
+
+    return { ...prof, voiceProfile: nextVp };
+  });
+
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(compactProfiles));
   } catch (e) {
-    console.error("Error saving profiles to localStorage:", e);
+    console.warn('localStorage quota reached, storing stripped audio metadata fallback:', e);
+    try {
+      const minimalProfiles = compactProfiles.map(p => ({
+        ...p,
+        voiceProfile: p.voiceProfile
+          ? { ...p.voiceProfile, recordedAudioUrl: undefined, bankedPhrases: [] }
+          : undefined,
+      }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(minimalProfiles));
+    } catch (innerErr) {
+      console.error('Error saving profiles to localStorage:', innerErr);
+    }
   }
 }
 
@@ -73,6 +258,9 @@ export function getDefaultProfile(): UserProfile {
     baselineOffsetX: 0,
     baselineOffsetY: 0,
     invertY: false,
+    dwellTimeMs: 1200,
+    isAdaptiveDwellEnabled: true,
+    isStickyKeyboardEnabled: true,
     neutralCenter: { x: 0.5, y: 0.5 },
     voiceProfile: { ...DEFAULT_VOICE_PROFILE },
   };
@@ -95,6 +283,9 @@ export function createNewProfile(name: string, language: 'es' | 'en' = 'es'): Us
     baselineOffsetX: 0,
     baselineOffsetY: 0,
     invertY: false,
+    dwellTimeMs: 1200,
+    isAdaptiveDwellEnabled: true,
+    isStickyKeyboardEnabled: true,
     neutralCenter: { x: 0.5, y: 0.5 },
     voiceProfile: {
       ...DEFAULT_VOICE_PROFILE,

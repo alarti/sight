@@ -13,7 +13,7 @@ let sharedAudioContext: AudioContext | null = null;
  * Returns a singleton AudioContext instance to prevent browser AudioContext exhaustion
  * (browsers cap concurrent AudioContexts at ~6 instances).
  */
-function getSharedAudioContext(): AudioContext | null {
+export function getSharedAudioContext(): AudioContext | null {
   if (typeof window === 'undefined') return null;
   const AudioContextClass = window.AudioContext || (window as WindowWithWebkitAudio).webkitAudioContext;
   if (!AudioContextClass) return null;

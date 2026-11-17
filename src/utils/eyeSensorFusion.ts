@@ -214,10 +214,16 @@ export function solve3DEyeballVisualAxisRay(
   };
 }
 
+const ROI_OUT_W = 36;
+const ROI_OUT_H = 22;
+const REUSABLE_LUMA_BUFFER = new Float32Array(ROI_OUT_W * ROI_OUT_H);
+const REUSABLE_SAMPLES_BUFFER = new Float32Array(ROI_OUT_W * ROI_OUT_H);
+
 /**
  * Pure photometric dark-pupil & iris intensity centroid solver inside a cropped luminance ROI.
  * Eliminates MediaPipe landmark discrete step jitter by weighting squared luminance deficit
  * (threshold - L(x,y))^2 inside an elliptical palpebral mask with a gentle center prior.
+ * Reuses pre-allocated typed array buffers for zero heap allocations in the 60 FPS loop.
  */
 export function computePhotometricPupilCentroid(
   luma: ArrayLike<number>,
@@ -232,7 +238,12 @@ export function computePhotometricPupilCentroid(
     return { normX: 0.5, normY: 0.5, confidence: 0, active: false };
   }
 
-  const samples: number[] = [];
+  const totalPixels = width * height;
+  const sampleBuf = totalPixels <= REUSABLE_SAMPLES_BUFFER.length
+    ? REUSABLE_SAMPLES_BUFFER
+    : new Float32Array(totalPixels);
+  let sampleCount = 0;
+
   const invRx2 = 1 / Math.max(2, rx * rx);
   const invRy2 = 1 / Math.max(2, ry * ry);
 
@@ -242,18 +253,19 @@ export function computePhotometricPupilCentroid(
       const dx = px - initX;
       const ellip = dx * dx * invRx2 + dy * dy * invRy2;
       if (ellip <= 1.0) {
-        samples.push(luma[py * width + px]);
+        sampleBuf[sampleCount++] = luma[py * width + px];
       }
     }
   }
 
-  if (samples.length < 12) {
+  if (sampleCount < 12) {
     return { normX: initX / width, normY: initY / height, confidence: 0, active: false };
   }
 
-  samples.sort((a, b) => a - b);
-  const p10 = samples[Math.floor(samples.length * 0.10)];
-  const p75 = samples[Math.floor(samples.length * 0.75)];
+  const activeSlice = sampleBuf.subarray(0, sampleCount);
+  activeSlice.sort();
+  const p10 = activeSlice[Math.floor(sampleCount * 0.10)];
+  const p75 = activeSlice[Math.floor(sampleCount * 0.75)];
   const contrast = p75 - p10;
 
   if (contrast < 14) {
@@ -337,8 +349,8 @@ export function sampleEyeRoiPhotometricCentroid(
   const sx = Math.max(0, Math.min(videoW - cropW, Math.round(midX - cropW * 0.5)));
   const sy = Math.max(0, Math.min(videoH - cropH, Math.round(midY - cropH * 0.5)));
 
-  const outW = 36;
-  const outH = 22;
+  const outW = ROI_OUT_W;
+  const outH = ROI_OUT_H;
   if (roiCanvas.width !== outW) roiCanvas.width = outW;
   if (roiCanvas.height !== outH) roiCanvas.height = outH;
 
@@ -349,7 +361,7 @@ export function sampleEyeRoiPhotometricCentroid(
 
   ctx.drawImage(video, sx, sy, cropW, cropH, 0, 0, outW, outH);
   const imgData = ctx.getImageData(0, 0, outW, outH).data;
-  const luma = new Float32Array(outW * outH);
+  const luma = REUSABLE_LUMA_BUFFER;
   for (let i = 0; i < outW * outH; i++) {
     const idx = i * 4;
     // Rec.709 luminance weighted toward red channel (minimizes sclera redness artifact, maximizes iris-sclera contrast)

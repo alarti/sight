@@ -30,7 +30,7 @@ export const ScientificPaperModal: React.FC<ScientificPaperModalProps> = ({
   useEffect(() => {
     if (isOpen) {
       setIsLoadingLatex(true);
-      const filename = paperLang === 'en' ? '/paper_calibracion_ela_en.tex' : '/paper_calibracion_ela.tex';
+      const filename = paperLang === 'en' ? './paper_calibracion_ela_en.tex' : './paper_calibracion_ela.tex';
       fetch(filename)
         .then(res => res.text())
         .then(text => {

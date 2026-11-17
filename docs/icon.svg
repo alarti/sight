@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
+  <rect width="512" height="512" rx="128" fill="#020617"/>
+  <circle cx="256" cy="256" r="210" stroke="#06b6d4" stroke-width="8" stroke-dasharray="16 12" opacity="0.6"/>
+  <circle cx="256" cy="256" r="160" fill="url(#eyeGrad)" opacity="0.15"/>
+  <path d="M64 256C112 160 176 112 256 112C336 112 400 160 448 256C400 352 336 400 256 400C176 400 112 352 64 256Z" stroke="#06b6d4" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="256" cy="256" r="76" fill="#0891b2" stroke="#22d3ee" stroke-width="16"/>
+  <circle cx="256" cy="256" r="32" fill="#020617"/>
+  <circle cx="276" cy="236" r="12" fill="#ffffff"/>
+  <defs>
+    <radialGradient id="eyeGrad" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(256 256) rotate(90) scale(160)">
+      <stop stop-color="#06b6d4"/>
+      <stop offset="1" stop-color="#020617" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+</svg>

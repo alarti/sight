@@ -153,6 +153,9 @@ export interface UserProfile {
   baselineOffsetX: number;
   baselineOffsetY: number;
   invertY?: boolean;
+  dwellTimeMs?: number;
+  isAdaptiveDwellEnabled?: boolean;
+  isStickyKeyboardEnabled?: boolean;
   neutralCenter?: { x: number; y: number };
   calibrationMatrix?: CalibrationMatrixSnapshot;
   voiceProfile?: VoiceProfile;

@@ -8,15 +8,15 @@ import { Camera, Eye, SunMedium } from 'lucide-react';
 import { UserProfile, EyeTrackingData, CalibrationAlgorithm, OcularTheme, CursorControlMode } from './types/index.ts';
 import { BrowserAIEyeTracker } from './eyeTracker.ts';
 import { fitCalibrationModel } from './utils/calibration.ts';
-import { BayesianTargetDecoder, collectVisibleDwellTargets } from './utils/bayesianTargetDecoder.ts';
+import { BayesianTargetDecoder, collectVisibleDwellTargets, invalidateDwellTargetsCache } from './utils/bayesianTargetDecoder.ts';
 import { OcularTrackballController, TwoStageLoupeController, TwoStageLoupeState } from './utils/cursorPositioning.ts';
 import { 
   loadProfiles, saveProfiles, getDefaultProfile, 
-  exportProfilesJSON, importProfilesJSON 
+  exportProfilesJSON, importProfilesJSON, hydrateProfilesAudioFromIndexedDB 
 } from './profileManager.ts';
 import { playDwellChime, playKeySnapTick, playKeyTypeChime, playAutocompleteChime } from './utils/audio.ts';
 import { getAiAutocompleteSuggestion } from './utils/predictive.ts';
-import { playBankedPhraseOrSynthesize } from './utils/voiceCloner.ts';
+import { useSpeechSynthesizer } from './hooks/useSpeechSynthesizer.ts';
 
 import { HeaderBar } from './components/HeaderBar.tsx';
 import { AdvancedPanel } from './components/AdvancedPanel.tsx';
@@ -111,27 +111,23 @@ export default function App() {
 
   const [ivtStabilizationEnabled, setIvtStabilizationEnabled] = useState<boolean>(activeProfile.ivtStabilizationEnabled ?? true);
   const [verticalGainMultiplier, setVerticalGainMultiplier] = useState<number>(activeProfile.verticalGainMultiplier || 1.15);
-  const [dwellTimeMs, setDwellTimeMs] = useState<number>(1200);
+  const [dwellTimeMs, setDwellTimeMs] = useState<number>(activeProfile.dwellTimeMs || 1200);
   const [dwellProgress, setDwellProgress] = useState<number>(0);
   const [hoveredDwellId, setHoveredDwellId] = useState<string | null>(null);
-  const [isAdaptiveDwellEnabled, setIsAdaptiveDwellEnabled] = useState<boolean>(true);
+  const [isAdaptiveDwellEnabled, setIsAdaptiveDwellEnabled] = useState<boolean>(activeProfile.isAdaptiveDwellEnabled ?? true);
   const [isAdvancedPanelOpen, setIsAdvancedPanelOpen] = useState<boolean>(false);
   
   const sessionSuccessCountRef = useRef<number>(0);
   const sessionCancelCountRef = useRef<number>(0);
   
   const [typedMessage, setTypedMessage] = useState<string>('');
-  const [isAudioEnabled, setIsAudioEnabled] = useState<boolean>(true);
-  const [lastSpokenText, setLastSpokenText] = useState<string>(
-    currentLanguage === 'en' ? 'ALS Assistive System ready.' : 'Sistema de Asistencia ELA listo.'
-  );
 
   // Mario's Sticky Cursor & Directional Eye Stepper
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
 
-  const [isStickyKeyboardEnabled, setIsStickyKeyboardEnabled] = useState<boolean>(true);
-  const isStickyKeyboardEnabledRef = useRef<boolean>(true);
+  const [isStickyKeyboardEnabled, setIsStickyKeyboardEnabled] = useState<boolean>(activeProfile.isStickyKeyboardEnabled ?? true);
+  const isStickyKeyboardEnabledRef = useRef<boolean>(isStickyKeyboardEnabled);
   isStickyKeyboardEnabledRef.current = isStickyKeyboardEnabled;
 
   const [stickyFocusedKey, setStickyFocusedKey] = useState<string>('Q');
@@ -166,6 +162,17 @@ export default function App() {
   const trackingInfoRef = useRef<EyeTrackingData | null>(trackingInfo);
   trackingInfoRef.current = trackingInfo;
 
+  const {
+    isAudioEnabled,
+    setIsAudioEnabled,
+    lastSpokenText,
+    speakText,
+  } = useSpeechSynthesizer({
+    activeProfileRef,
+    currentLanguageRef,
+    initialLanguage: currentLanguage,
+  });
+
   const dwellStartTimeRef = useRef<number | null>(null);
   const dwellTargetRef = useRef<string | null>(null);
   const dwellCooldownUntilRef = useRef<number>(0);
@@ -175,6 +182,21 @@ export default function App() {
   const lastLoopTimeRef = useRef<number>(0);
   const invalidGazeElapsedRef = useRef<number>(0);
   const animFrameRef = useRef<number | null>(null);
+
+  // Invalidate Bayesian target bounding-box cache when layout/modals/tabs change
+  useEffect(() => {
+    invalidateDwellTargetsCache();
+  }, [
+    activeTab,
+    isOcularRestMode,
+    isAdvancedPanelOpen,
+    isGridWizardOpen,
+    isOnboardingOpen,
+    isProfileModalOpen,
+    isPaperModalOpen,
+    isVoiceCloningModalOpen,
+    isManualAimingMode,
+  ]);
 
   const handleOnboardingComplete = (name: string, lang: Language = 'es') => {
     const newProf: UserProfile = {
@@ -194,6 +216,9 @@ export default function App() {
       baselineOffsetX: 0,
       baselineOffsetY: 0,
       invertY: false,
+      dwellTimeMs: 1200,
+      isAdaptiveDwellEnabled: true,
+      isStickyKeyboardEnabled: true,
     };
     const updated = [newProf];
     setProfiles(updated);
@@ -205,7 +230,7 @@ export default function App() {
     }, 500);
   };
 
-  // Load profiles on mount
+  // Load profiles on mount and hydrate IndexedDB voice audio blobs
   useEffect(() => {
     const loaded = loadProfiles();
     setProfiles(loaded);
@@ -223,6 +248,15 @@ export default function App() {
       setIvtStabilizationEnabled(loaded[0].ivtStabilizationEnabled ?? true);
       setVerticalGainMultiplier(loaded[0].verticalGainMultiplier || 1.15);
       setOcularTheme(loaded[0].ocularTheme || 'warm-obsidian');
+      setDwellTimeMs(loaded[0].dwellTimeMs || 1200);
+      setIsAdaptiveDwellEnabled(loaded[0].isAdaptiveDwellEnabled ?? true);
+      setIsStickyKeyboardEnabled(loaded[0].isStickyKeyboardEnabled ?? true);
+
+      void hydrateProfilesAudioFromIndexedDB(loaded).then((hydrated) => {
+        if (hydrated !== loaded) {
+          setProfiles(hydrated);
+        }
+      });
     }
   }, []);
 
@@ -239,6 +273,15 @@ export default function App() {
       setIvtStabilizationEnabled(activeProfile.ivtStabilizationEnabled ?? true);
       setVerticalGainMultiplier(activeProfile.verticalGainMultiplier || 1.15);
       setOcularTheme(activeProfile.ocularTheme || 'warm-obsidian');
+      if (typeof activeProfile.dwellTimeMs === 'number') {
+        setDwellTimeMs(activeProfile.dwellTimeMs);
+      }
+      if (typeof activeProfile.isAdaptiveDwellEnabled === 'boolean') {
+        setIsAdaptiveDwellEnabled(activeProfile.isAdaptiveDwellEnabled);
+      }
+      if (typeof activeProfile.isStickyKeyboardEnabled === 'boolean') {
+        setIsStickyKeyboardEnabled(activeProfile.isStickyKeyboardEnabled);
+      }
       if (activeProfile.neutralCenter) {
         neutralCenterRef.current = { ...activeProfile.neutralCenter };
       }
@@ -267,62 +310,6 @@ export default function App() {
     dwellTimeMsRef.current = dwellTimeMs;
   }, [dwellTimeMs]);
 
-  // High-Fidelity Vocalization: Banked Personal Audio, Physical Glottal Formants, or Calibrated TTS
-  const speakText = useCallback((text: string, onEnd?: () => void) => {
-    setLastSpokenText(text);
-    if (!isAudioEnabled) {
-      if (onEnd) onEnd();
-      return;
-    }
-
-    const vp = activeProfileRef.current?.voiceProfile;
-    if (vp && vp.enabled && vp.synthesisEngine !== 'system-tts') {
-      playBankedPhraseOrSynthesize(text, vp, currentLanguageRef.current, onEnd);
-      return;
-    }
-
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.lang = currentLanguageRef.current === 'en' ? 'en-US' : 'es-ES';
-      utterance.rate = 0.95;
-      utterance.pitch = 1.0;
-
-      if (vp && vp.enabled) {
-        utterance.pitch = vp.pitchMultiplier;
-        utterance.rate = vp.speechRate;
-        utterance.volume = vp.volume;
-        if (vp.voiceUri) {
-          const voices = window.speechSynthesis.getVoices();
-          const matchedVoice = voices.find(v => v.voiceURI === vp.voiceUri);
-          if (matchedVoice) {
-            utterance.voice = matchedVoice;
-          }
-        }
-      }
-
-      let hasFinished = false;
-      const handleFinish = () => {
-        if (!hasFinished) {
-          hasFinished = true;
-          if (onEnd) onEnd();
-        }
-      };
-
-      utterance.onend = handleFinish;
-      utterance.onerror = handleFinish;
-
-      const wordCount = text.trim().split(/\s+/).length;
-      const rateFactor = utterance.rate || 1.0;
-      const estimatedDurationMs = Math.max(1600, Math.round((wordCount * 650) / rateFactor));
-      setTimeout(handleFinish, estimatedDurationMs + 400);
-
-      window.speechSynthesis.speak(utterance);
-    } else {
-      if (onEnd) onEnd();
-    }
-  }, [isAudioEnabled]);
-
   const handleSpeakTypedMessage = useCallback(() => {
     if (typedMessage.trim()) {
       const messageToSpeak = typedMessage.trim();
@@ -334,6 +321,7 @@ export default function App() {
 
   const [isBlinkSpeaking, setIsBlinkSpeaking] = useState<boolean>(false);
   const wasBlinkingRef = useRef<boolean>(false);
+  const blinkStartTimeRef = useRef<number | null>(null);
   const lastBlinkSpeakTimeRef = useRef<number>(0);
 
   const handleApplyAiSuggestion = useCallback(() => {
@@ -394,14 +382,15 @@ export default function App() {
     setGridCol(c);
 
     const targetKey = gridMap[r][c];
+    const targetDwellId = r >= 2 ? `char-${targetKey}` : targetKey;
     setStickyFocusedKey(targetKey);
     stickyFocusedKeyRef.current = targetKey;
-    setHoveredDwellId(targetKey);
+    setHoveredDwellId(targetDwellId);
 
     playKeySnapTick();
 
     dwellStartTimeRef.current = performance.now();
-    dwellTargetRef.current = targetKey;
+    dwellTargetRef.current = targetDwellId;
     setDwellProgress(0);
   }, []);
 
@@ -819,6 +808,14 @@ export default function App() {
   const startCamera = async () => {
     setCameraError(null);
     try {
+      if (eyeTrackerRef.current) {
+        eyeTrackerRef.current.dispose();
+        eyeTrackerRef.current = null;
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
+      }
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
         audio: false
@@ -826,7 +823,9 @@ export default function App() {
       streamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        await videoRef.current.play().catch(() => {});
+        await videoRef.current.play().catch((err) => {
+          console.debug('Video play deferred:', err);
+        });
         eyeTrackerRef.current = new BrowserAIEyeTracker(videoRef.current);
         eyeTrackerRef.current.setSensitivity(sensitivityX, sensitivityY);
         eyeTrackerRef.current.setInvertY(invertY);
@@ -863,6 +862,10 @@ export default function App() {
   };
 
   const stopCamera = () => {
+    if (eyeTrackerRef.current) {
+      eyeTrackerRef.current.dispose();
+      eyeTrackerRef.current = null;
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(t => t.stop());
       streamRef.current = null;
@@ -876,6 +879,58 @@ export default function App() {
     setCameraActive(false);
     setTrackingMode('mouse');
   };
+
+  useEffect(() => {
+    return () => {
+      if (eyeTrackerRef.current) {
+        eyeTrackerRef.current.dispose();
+        eyeTrackerRef.current = null;
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
+      }
+    };
+  }, []);
+
+  const handleDwellTimeChange = useCallback((val: number) => {
+    setDwellTimeMs(val);
+    if (activeProfileRef.current) {
+      handleSaveProfile({
+        ...activeProfileRef.current,
+        dwellTimeMs: val,
+        updatedAt: Date.now(),
+      });
+    }
+  }, [handleSaveProfile]);
+
+  const handleAdaptiveDwellChange = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
+    setIsAdaptiveDwellEnabled(prev => {
+      const next = typeof val === 'function' ? val(prev) : val;
+      if (activeProfileRef.current) {
+        handleSaveProfile({
+          ...activeProfileRef.current,
+          isAdaptiveDwellEnabled: next,
+          updatedAt: Date.now(),
+        });
+      }
+      return next;
+    });
+  }, [handleSaveProfile]);
+
+  const handleStickyKeyboardChange = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
+    setIsStickyKeyboardEnabled(prev => {
+      const next = typeof val === 'function' ? val(prev) : val;
+      if (activeProfileRef.current) {
+        handleSaveProfile({
+          ...activeProfileRef.current,
+          isStickyKeyboardEnabled: next,
+          updatedAt: Date.now(),
+        });
+      }
+      return next;
+    });
+  }, [handleSaveProfile]);
 
   const handleCenterCalibration = () => {
     const screenW = typeof window !== 'undefined' ? window.innerWidth : 1280;
@@ -1303,7 +1358,14 @@ export default function App() {
             !isManualAimingModeRef.current &&
             !isOcularRestModeRef.current
           ) {
-            if (!wasBlinkingRef.current && now - lastBlinkSpeakTimeRef.current > 1800) {
+            if (blinkStartTimeRef.current === null) {
+              blinkStartTimeRef.current = now;
+            } else if (
+              !wasBlinkingRef.current &&
+              now - blinkStartTimeRef.current >= 420 &&
+              now - lastBlinkSpeakTimeRef.current > 1800
+            ) {
+              // Require >= 420ms intentional sustained blink so normal 100-200ms physiological blinks never erase typed text
               wasBlinkingRef.current = true;
               lastBlinkSpeakTimeRef.current = now;
               dwellCooldownUntilRef.current = now + 1100;
@@ -1311,6 +1373,8 @@ export default function App() {
               setDwellProgress(0);
               handleApplyAiSuggestionRef.current();
             }
+          } else {
+            blinkStartTimeRef.current = null;
           }
 
           if (!isTrackingPausedRef.current) {
@@ -1340,6 +1404,7 @@ export default function App() {
           }
         } else {
           wasBlinkingRef.current = false;
+          blinkStartTimeRef.current = null;
           invalidGazeElapsedRef.current = 0;
           if (isTrackingPausedRef.current) {
             isTrackingPausedRef.current = false;
@@ -1724,9 +1789,9 @@ export default function App() {
         invertY={invertY}
         onToggleInvertY={handleToggleInvertY}
         dwellTimeMs={dwellTimeMs}
-        setDwellTimeMs={setDwellTimeMs}
+        setDwellTimeMs={handleDwellTimeChange}
         isAdaptiveDwellEnabled={isAdaptiveDwellEnabled}
-        setIsAdaptiveDwellEnabled={setIsAdaptiveDwellEnabled}
+        setIsAdaptiveDwellEnabled={handleAdaptiveDwellChange}
         onLaunchGridWizard={() => setIsGridWizardOpen(true)}
         onCenterCalibration={handleCenterCalibration}
         onExportBackup={handleExportBackup}
@@ -1816,7 +1881,7 @@ export default function App() {
             hoveredDwellId={hoveredDwellId}
             stickyFocusedKey={stickyFocusedKey}
             isStickyKeyboardEnabled={isStickyKeyboardEnabled}
-            setIsStickyKeyboardEnabled={setIsStickyKeyboardEnabled}
+            setIsStickyKeyboardEnabled={handleStickyKeyboardChange}
             keyboardContainerRef={keyboardContainerRef}
             onSpeakTypedMessage={handleSpeakTypedMessage}
             onApplyAiSuggestion={handleApplyAiSuggestion}

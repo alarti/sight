@@ -258,11 +258,34 @@ export class BrowserAIEyeTracker {
     }
   }
 
+  public dispose() {
+    this.isInitialized = false;
+    if (this.faceLandmarker) {
+      try {
+        this.faceLandmarker.close();
+      } catch (err) {
+        console.debug("Error closing FaceLandmarker:", err);
+      }
+      this.faceLandmarker = null;
+    }
+    this.roiCanvas = null;
+  }
+
   private buildSamplesSignature(samples: CalibrationSample[], algo: CalibrationAlgorithm): string {
     if (samples.length === 0) return `0:${algo}`;
-    const first = samples[0];
-    const last = samples[samples.length - 1];
-    return `${samples.length}:${algo}:${first.targetX.toFixed(1)},${first.targetY.toFixed(1)}:${last.targetX.toFixed(1)},${last.targetY.toFixed(1)},${last.rawPupilX.toFixed(4)},${last.rawPupilY.toFixed(4)}`;
+    let hash = 2166136261;
+    for (let i = 0; i < samples.length; i++) {
+      const s = samples[i];
+      const v1 = Math.round(s.targetX * 10);
+      const v2 = Math.round(s.targetY * 10);
+      const v3 = Math.round(s.rawPupilX * 10000);
+      const v4 = Math.round(s.rawPupilY * 10000);
+      hash = Math.imul(hash ^ v1, 16777619);
+      hash = Math.imul(hash ^ v2, 16777619);
+      hash = Math.imul(hash ^ v3, 16777619);
+      hash = Math.imul(hash ^ v4, 16777619);
+    }
+    return `${samples.length}:${algo}:${hash >>> 0}`;
   }
 
   public setCalibrationAlgorithm(algo: CalibrationAlgorithm) {

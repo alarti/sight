@@ -4,6 +4,7 @@
  */
 
 import { VoiceProfile, FormantFrequencies } from '../types/index.ts';
+import { getSharedAudioContext } from './audio.ts';
 
 export interface VoiceAnalysisResult {
   fundamentalFreqHz: number;
@@ -734,9 +735,8 @@ export function playVocalFormantSynthesizer(
   durationSeconds: number = 1.0
 ): void {
   try {
-    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioContextClass) return;
-    const ctx = new AudioContextClass();
+    const ctx = getSharedAudioContext();
+    if (!ctx) return;
 
     const osc = ctx.createOscillator();
     const mainGain = ctx.createGain();
@@ -793,6 +793,10 @@ export function playVocalFormantSynthesizer(
     mainGain.gain.setValueAtTime(0.25, ctx.currentTime + durationSeconds - 0.15);
     mainGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + durationSeconds);
 
+    osc.onended = () => {
+      mainGain.disconnect();
+    };
+
     osc.start();
     osc.stop(ctx.currentTime + durationSeconds);
   } catch (err) {
@@ -805,9 +809,8 @@ export function playVocalFormantSynthesizer(
  */
 export function playPhysicalFormantChime(fundamentalFreqHz: number = 150, durationSeconds: number = 0.8): void {
   try {
-    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-    if (!AudioContextClass) return;
-    const ctx = new AudioContextClass();
+    const ctx = getSharedAudioContext();
+    if (!ctx) return;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
 
@@ -820,6 +823,10 @@ export function playPhysicalFormantChime(fundamentalFreqHz: number = 150, durati
 
     osc.connect(gain);
     gain.connect(ctx.destination);
+
+    osc.onended = () => {
+      gain.disconnect();
+    };
 
     osc.start();
     osc.stop(ctx.currentTime + durationSeconds);

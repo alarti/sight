@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -e
+
+echo "🔨 [SIGHT Git Hook] Compilando sitio estático en /docs para GitHub Pages..."
+npm run build:pages
+git add docs/
+echo "✅ [SIGHT Git Hook] Carpeta /docs actualizada y añadida al commit."

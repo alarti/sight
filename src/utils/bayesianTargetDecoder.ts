@@ -168,13 +168,42 @@ export class BayesianTargetDecoder {
   }
 }
 
+let cachedTargets: UiTargetRect[] = [];
+let cachedAllowedId: string | null | undefined = undefined;
+let cachedAtMs = 0;
+const TARGET_CACHE_TTL_MS = 180;
+
+if (typeof window !== 'undefined') {
+  const invalidate = () => {
+    cachedAtMs = 0;
+  };
+  window.addEventListener('resize', invalidate, { passive: true });
+  window.addEventListener('scroll', invalidate, { passive: true, capture: true });
+}
+
+export function invalidateDwellTargetsCache() {
+  cachedAtMs = 0;
+}
+
 /**
  * Helper to gather visible interactive `[data-dwell-id]` targets from DOM safely.
+ * Uses a short-lived bounding-box cache (180ms TTL + resize/scroll invalidation)
+ * to avoid layout thrashing on every 60 FPS animation frame.
  */
 export function collectVisibleDwellTargets(
   allowedTargetId?: string | null
 ): UiTargetRect[] {
   if (typeof document === 'undefined') return [];
+
+  const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  if (
+    cachedAtMs > 0 &&
+    now - cachedAtMs < TARGET_CACHE_TTL_MS &&
+    cachedAllowedId === allowedTargetId
+  ) {
+    return cachedTargets;
+  }
+
   const els = document.querySelectorAll('[data-dwell-id]');
   const result: UiTargetRect[] = [];
 
@@ -199,5 +228,8 @@ export function collectVisibleDwellTargets(
     });
   }
 
+  cachedTargets = result;
+  cachedAllowedId = allowedTargetId;
+  cachedAtMs = now;
   return result;
 }
