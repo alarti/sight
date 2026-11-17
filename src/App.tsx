@@ -1193,12 +1193,12 @@ export default function App() {
       setBayesianConfidence(0);
     }
 
-    // Boundary hysteresis: if already dwelling on a button (and not inside sanctuary), tolerate a 22px micro-tremor margin
+    // Boundary hysteresis: if already dwelling on a button (and not inside sanctuary), tolerate a 26px micro-tremor margin
     if (!dwellElement && !inSanctuary && dwellTargetRef.current) {
       const activeEl = document.querySelector(`[data-dwell-id="${CSS.escape(dwellTargetRef.current)}"]`) as HTMLElement | null;
       if (activeEl) {
         const rect = activeEl.getBoundingClientRect();
-        const margin = 22;
+        const margin = 26;
         if (
           rawX >= rect.left - margin &&
           rawX <= rect.right + margin &&
@@ -1210,13 +1210,22 @@ export default function App() {
       }
     }
 
-    // Smooth reticle stabilization toward target center when locked/dwelling
+    // Smooth magnetic gravity well toward target center when locked/dwelling
     if (dwellElement && cursorControlModeRef.current !== 'bayesian-lock') {
       const rect = dwellElement.getBoundingClientRect();
       const centerX = rect.left + rect.width / 2;
       const centerY = rect.top + rect.height / 2;
-      displayX = rawX * 0.65 + centerX * 0.35;
-      displayY = rawY * 0.65 + centerY * 0.35;
+      displayX = rawX * 0.38 + centerX * 0.62;
+      displayY = rawY * 0.38 + centerY * 0.62;
+    }
+
+    // Sub-pixel visual reticle damping during local fixation (< 28px) to prevent visual fatigue
+    const prevDisplay = liveCursorPosRef.current;
+    const stepDisplay = Math.hypot(displayX - prevDisplay.x, displayY - prevDisplay.y);
+    if (stepDisplay < 28 && !isManualAimingModeRef.current) {
+      const blend = stepDisplay < 10 ? 0.18 : 0.42;
+      displayX = prevDisplay.x * (1 - blend) + displayX * blend;
+      displayY = prevDisplay.y * (1 - blend) + displayY * blend;
     }
 
     liveCursorPosRef.current = { x: displayX, y: displayY };

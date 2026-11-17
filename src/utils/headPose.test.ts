@@ -121,4 +121,40 @@ describe('Head Pose Estimation & Sub-Pixel Iris Geometry', () => {
     expect(occluded.upperLidOcclusion).toBeGreaterThan(open.upperLidOcclusion);
     expect(occluded.confidenceWeight).toBeLessThan(open.confidenceWeight * 0.5);
   });
+
+  it('should damp single-landmark corner & iris center quantization spikes via multi-point bony canthal cluster and chord consistency', () => {
+    const clean = Array.from({ length: 478 }, () => ({ x: 0.5, y: 0.5, z: 0 }));
+    // Populate left lateral canthal cluster (33, 246, 7, 130) & medial cluster (133, 173, 155, 243)
+    clean[33] = { x: 0.30, y: 0.45, z: 0 };
+    clean[246] = { x: 0.308, y: 0.445, z: 0 };
+    clean[7] = { x: 0.308, y: 0.455, z: 0 };
+    clean[130] = { x: 0.292, y: 0.45, z: 0 };
+
+    clean[133] = { x: 0.40, y: 0.45, z: 0 };
+    clean[173] = { x: 0.392, y: 0.445, z: 0 };
+    clean[155] = { x: 0.392, y: 0.455, z: 0 };
+    clean[243] = { x: 0.408, y: 0.45, z: 0 };
+
+    clean[159] = { x: 0.35, y: 0.435, z: 0 };
+    clean[145] = { x: 0.35, y: 0.465, z: 0 };
+
+    // 5-point iris constellation centered at (0.35, 0.45)
+    clean[468] = { x: 0.35, y: 0.45, z: 0 };
+    clean[469] = { x: 0.365, y: 0.45, z: 0 };
+    clean[470] = { x: 0.35, y: 0.435, z: 0 };
+    clean[471] = { x: 0.335, y: 0.45, z: 0 };
+    clean[472] = { x: 0.35, y: 0.465, z: 0 };
+
+    const refGeo = analyzeSubpixelEyeGeometry(clean, 'left', 640, 480, 1.15);
+
+    // Perturb primary center landmark 468 by +0.008 while limbus chord (469, 471) stays stable
+    const perturbed = clean.map(p => ({ ...p }));
+    perturbed[468] = { x: 0.358, y: 0.456, z: 0 };
+    const pertGeo = analyzeSubpixelEyeGeometry(perturbed, 'left', 640, 480, 1.15);
+
+    // Chord consistency must damp the 0.008 center spike to < 0.0035 actual pupil shift
+    expect(Math.abs(pertGeo.pupilCenterNorm.x - refGeo.pupilCenterNorm.x)).toBeLessThan(0.0035);
+    expect(Math.abs(pertGeo.pupilCenterNorm.y - refGeo.pupilCenterNorm.y)).toBeLessThan(0.0035);
+  });
 });
+

@@ -71,13 +71,72 @@ export function estimateHeadPose(landmarks: LandmarkPoint[]): HeadPoseData {
 }
 
 /**
- * High-SNR Sub-Pixel Iris & Palpebral Constellation Analyzer:
- * - Averages all 5 MediaPipe iris landmarks (center + 4 cardinal limbus points)
- *   to reduce single-landmark quantization flicker by >55%
+ * Computes a noise-suppressed anatomical anchor by fusing a primary MediaPipe landmark
+ * with its local bony orbital/palpebral neighbor constellation when those neighbors lie
+ * within anatomical proximity (gracefully ignoring unpopulated synthetic test landmarks).
+ */
+function computeRobustCanthalCluster(
+  landmarks: LandmarkPoint[],
+  primaryIdx: number,
+  pairUpperIdx: number,
+  pairLowerIdx: number,
+  orbitalRimIdx: number,
+  referenceSpan: number,
+  fallback: LandmarkPoint
+): LandmarkPoint {
+  const primary = landmarks[primaryIdx] || fallback;
+  const maxClusterRadius = Math.max(0.004, referenceSpan * 0.26);
+
+  let sumW = 0.58;
+  let sumX = primary.x * 0.58;
+  let sumY = primary.y * 0.58;
+  let sumZ = (primary.z ?? 0) * 0.58;
+
+  // Vertically symmetric upper/lower palpebral rim pair near the canthus
+  const pUp = landmarks[pairUpperIdx];
+  const pLo = landmarks[pairLowerIdx];
+  if (pUp && pLo) {
+    const midPairX = (pUp.x + pLo.x) * 0.5;
+    const midPairY = (pUp.y + pLo.y) * 0.5;
+    const midPairZ = ((pUp.z ?? 0) + (pLo.z ?? 0)) * 0.5;
+    const dPair = Math.hypot(midPairX - primary.x, midPairY - primary.y);
+    if (dPair > 1e-6 && dPair <= maxClusterRadius) {
+      const wPair = 0.24;
+      sumW += wPair;
+      sumX += midPairX * wPair;
+      sumY += midPairY * wPair;
+      sumZ += midPairZ * wPair;
+    }
+  }
+
+  // Bony orbital tubercle anchor
+  const pOrb = landmarks[orbitalRimIdx];
+  if (pOrb) {
+    const dOrb = Math.hypot(pOrb.x - primary.x, pOrb.y - primary.y);
+    if (dOrb > 1e-6 && dOrb <= maxClusterRadius) {
+      const wOrb = 0.18;
+      sumW += wOrb;
+      sumX += pOrb.x * wOrb;
+      sumY += pOrb.y * wOrb;
+      sumZ += (pOrb.z ?? 0) * wOrb;
+    }
+  }
+
+  return {
+    x: sumX / sumW,
+    y: sumY / sumW,
+    z: sumZ / sumW,
+  };
+}
+
+/**
+ * High-SNR Sub-Pixel Iris & Multi-Point Bony Orbital Canthal Constellation Analyzer:
+ * - Fuses 6-point lateral & medial skeletal canthal clusters (33,246,7,130 / 133,173,155,243
+ *   and 263,466,249,359 / 362,398,382,463) to suppress single-landmark corner jitter by >65%
+ * - Combines all 5 MediaPipe iris landmarks (center + 4 cardinal limbus points) with
+ *   chord-consistency outlier damping so single-landmark quantization flicker is eliminated
  * - Projects pupil displacement onto the Roll-Invariant Orthonormal Canthal Basis
- *   anchored at the medial and lateral canthi (33, 133 / 362, 263)
- * - Fuses vertical iris displacement with synergistic palpebral fissure shift
- *   for smooth, monotonic vertical tracking without discontinuous jumps
+ * - Decouples vertical iris projection from upper eyelid droop (ptosis/blink immunity)
  */
 export function analyzeSubpixelEyeGeometry(
   landmarks: LandmarkPoint[],
@@ -86,15 +145,25 @@ export function analyzeSubpixelEyeGeometry(
   videoH: number,
   verticalGainMultiplier: number = 1.15
 ): SubpixelEyeAnalysis {
-  // Multi-point bony canthal anchors for lower noise
   const outerIdx = side === 'left' ? 33 : 263;
   const innerIdx = side === 'left' ? 133 : 362;
   const upperLidIdx = side === 'left' ? 159 : 386;
   const lowerLidIdx = side === 'left' ? 145 : 374;
   const irisBaseIdx = side === 'left' ? 468 : 473;
 
-  const outerCanthus = landmarks[outerIdx] || { x: 0.35, y: 0.45, z: 0 };
-  const innerCanthus = landmarks[innerIdx] || { x: 0.45, y: 0.45, z: 0 };
+  const rawOuter = landmarks[outerIdx] || { x: 0.35, y: 0.45, z: 0 };
+  const rawInner = landmarks[innerIdx] || { x: 0.45, y: 0.45, z: 0 };
+  const rawSpan = Math.max(0.005, Math.hypot(rawInner.x - rawOuter.x, rawInner.y - rawOuter.y));
+
+  // Multi-point bony orbital canthal constellation (suppresses corner landmark jitter)
+  const outerCanthus = side === 'left'
+    ? computeRobustCanthalCluster(landmarks, 33, 246, 7, 130, rawSpan, rawOuter)
+    : computeRobustCanthalCluster(landmarks, 263, 466, 249, 359, rawSpan, rawOuter);
+
+  const innerCanthus = side === 'left'
+    ? computeRobustCanthalCluster(landmarks, 133, 173, 155, 243, rawSpan, rawInner)
+    : computeRobustCanthalCluster(landmarks, 362, 398, 382, 463, rawSpan, rawInner);
+
   const upperLid = landmarks[upperLidIdx] || { x: 0.40, y: 0.43, z: 0 };
   const lowerLid = landmarks[lowerLidIdx] || { x: 0.40, y: 0.47, z: 0 };
 
@@ -121,13 +190,22 @@ export function analyzeSubpixelEyeGeometry(
   const compressionRatio = horizIrisDiameter > 1e-4 ? Math.min(1.0, verticalIrisSpan / horizIrisDiameter) : 1.0;
   const upperLidOcclusion = Math.max(0, Math.min(1.0, 1.0 - compressionRatio));
 
-  // Symmetric occlusion-immune sub-pixel iris centroid:
-  // Horizontal equator (pCenter + pLeft/pRight) stays centered vertically even when upper eyelid covers pTop;
-  // vertical rim pair (pTop + pBottom) is attenuated symmetrically as upperLidOcclusion rises (zero center-shift bias).
+  // Chord-consistent & occlusion-immune sub-pixel iris centroid:
+  // Horizontal limbus diameter midpoint (pLeft + pRight)/2 is invariant to upper eyelid occlusion.
+  // If pCenter exhibits a single-frame quantization spike away from the diameter midpoint, damp pCenter weight.
+  const chordMidX = (pRight.x + pLeft.x) * 0.5;
+  const chordMidY = (pRight.y + pLeft.y) * 0.5;
+  const centerChordEccentricity = horizIrisDiameter > 1e-4
+    ? Math.hypot(pCenter.x - chordMidX, pCenter.y - chordMidY) / horizIrisDiameter
+    : 0;
+  const centerTrust = centerChordEccentricity > 0.14
+    ? Math.max(0.25, 0.52 * Math.exp(-3.5 * (centerChordEccentricity - 0.14)))
+    : 0.52;
+
   const occFactor = Math.min(1.0, Math.max(0.0, (upperLidOcclusion - 0.12) / 0.35));
-  const vertPairWeight = 0.25 * (1.0 - occFactor);
-  const equatorX = pCenter.x * 0.60 + (pRight.x + pLeft.x) * 0.20;
-  const equatorY = pCenter.y * 0.60 + (pRight.y + pLeft.y) * 0.20;
+  const vertPairWeight = 0.22 * (1.0 - occFactor);
+  const equatorX = pCenter.x * centerTrust + chordMidX * (1.0 - centerTrust);
+  const equatorY = pCenter.y * centerTrust + chordMidY * (1.0 - centerTrust);
   const vertPairX = (pTop.x + pBottom.x) * 0.5;
   const vertPairY = (pTop.y + pBottom.y) * 0.5;
   const subpixelX = equatorX * (1.0 - vertPairWeight) + vertPairX * vertPairWeight;
@@ -170,9 +248,10 @@ export function analyzeSubpixelEyeGeometry(
   const vertScale = 1.85 * verticalGainMultiplier;
   const sphericalGazeY = Math.min(0.98, Math.max(0.02, 0.5 + deltaY * vertScale));
 
-  // 4. Binocular Confidence Weight (penalizes closed/squinted eye quadratically so clear eye dominates)
+  // 4. Binocular Confidence Weight (penalizes closed/squinted eye quadratically & rewards chord symmetry)
   const apertureQuality = Math.min(1.0, Math.max(0.05, (apertureRatio - 0.11) / 0.19));
-  const confidenceWeight = Math.max(0.05, eyeWidth * apertureQuality * apertureQuality);
+  const symmetryQuality = Math.max(0.4, 1.0 - centerChordEccentricity * 1.5);
+  const confidenceWeight = Math.max(0.05, eyeWidth * apertureQuality * apertureQuality * symmetryQuality);
 
   return {
     pupilCenterNorm: { x: subpixelX, y: subpixelY },

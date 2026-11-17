@@ -38,7 +38,7 @@ export const ScientificPaperModal: React.FC<ScientificPaperModalProps> = ({
           setIsLoadingLatex(false);
         })
         .catch(err => {
-          console.error("Error cargando archivo LaTeX:", err);
+          console.error('Error cargando archivo LaTeX:', err);
           setIsLoadingLatex(false);
         });
     }
@@ -63,7 +63,7 @@ export const ScientificPaperModal: React.FC<ScientificPaperModalProps> = ({
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
     } catch (err) {
-      console.error("Error al copiar al portapapeles:", err);
+      console.error('Error al copiar al portapapeles:', err);
     }
   };
 
@@ -72,16 +72,18 @@ export const ScientificPaperModal: React.FC<ScientificPaperModalProps> = ({
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'paper_calibracion_ela.tex';
+    link.download = paperLang === 'en' ? 'paper_calibracion_ela_en.tex' : 'paper_calibracion_ela.tex';
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
     URL.revokeObjectURL(url);
   };
 
+  const isEn = paperLang === 'en';
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-[var(--bg-canvas)]/92 backdrop-blur-md animate-in fade-in duration-150 text-[var(--text-primary)]">
-      <div 
+      <div
         className="bg-[var(--bg-surface)] border border-[var(--border-hairline)] rounded-2xl w-full max-w-5xl h-[90vh] flex flex-col overflow-hidden"
         onClick={(e) => e.stopPropagation()}
       >
@@ -225,24 +227,27 @@ export const ScientificPaperModal: React.FC<ScientificPaperModalProps> = ({
               {/* PAPER HEADER BANNER */}
               <div className="border-b border-[var(--border-hairline)] pb-6 text-center space-y-3">
                 <div className="flex items-center justify-center gap-2 flex-wrap text-[11px] font-mono uppercase tracking-[0.12em] text-[var(--accent-primary)]">
-                  <span>Investigación en Tecnología Asistencial y Neurocomputación</span>
+                  <span>{isEn ? 'Assistive Neuro-Ophthalmic Engineering · Preprint 2026' : 'Ingeniería Neuro-Oftálmica Asistencial · Preprint 2026'}</span>
                   <span>·</span>
-                  <span>Formato PDF y LaTeX Disponible</span>
+                  <span>{isEn ? 'PDF & LaTeX Available' : 'Formato PDF y LaTeX Disponible'}</span>
                 </div>
 
                 <h1 className="text-xl sm:text-2xl font-semibold text-[var(--text-primary)] leading-snug">
-                  A Non-Invasive Multimodal Ocular Gaze Tracking and Head-Pose Recalibration Framework for Assistive Communication in Amyotrophic Lateral Sclerosis (ALS)
+                  SIGHT: A Non-Invasive Tri-Modal Ocular Sensor Fusion, Hering-Constrained Pupil Stabilization, and Bayesian Gaze Decoding Framework for ALS Assistive Communication
                 </h1>
 
                 <div className="pt-1">
                   <div className="text-sm font-semibold text-[var(--accent-primary)]">
-                    Autor: <span className="text-[var(--text-primary)] underline underline-offset-4">Alberto Arce Rodríguez</span>
+                    {isEn ? 'Author: ' : 'Autor: '}
+                    <span className="text-[var(--text-primary)] underline underline-offset-4">Alberto Arce Rodríguez</span>
                   </div>
                   <div className="text-xs text-[var(--text-muted)] font-mono mt-0.5">
-                    Laboratorio de Tecnología Asistencial, Neurocomputación y Ciencias de la Visión
+                    {isEn
+                      ? 'Assistive Technology Laboratory, Neurocomputation and Vision Sciences Research Unit'
+                      : 'Laboratorio de Tecnología Asistencial, Neurocomputación y Ciencias de la Visión'}
                   </div>
                   <div className="text-xs text-[var(--text-muted)] font-mono">
-                    Contacto: alberto.arce.ti@gmail.com · Proyecto de Código Abierto 100% Sin Servidor
+                    Contacto: alberto.arce.ti@gmail.com · 100% Client-Side WebGPU/WASM
                   </div>
                 </div>
 
@@ -253,7 +258,7 @@ export const ScientificPaperModal: React.FC<ScientificPaperModalProps> = ({
                     className="px-5 py-2.5 rounded-xl bg-[var(--accent-primary)] text-[var(--accent-contrast)] font-semibold text-xs flex items-center gap-2 transition-colors"
                   >
                     <Download className="w-4 h-4" />
-                    <span>Descargar PDF ({paperLang.toUpperCase()}) - Alberto Arce Rodríguez</span>
+                    <span>{isEn ? `Download PDF (${paperLang.toUpperCase()}) - Alberto Arce Rodríguez` : `Descargar PDF (${paperLang.toUpperCase()}) - Alberto Arce Rodríguez`}</span>
                   </button>
 
                   <button
@@ -261,7 +266,7 @@ export const ScientificPaperModal: React.FC<ScientificPaperModalProps> = ({
                     className="px-4 py-2.5 rounded-xl bg-[var(--bg-elevated)] hover:border-[var(--border-active)] text-[var(--text-primary)] border border-[var(--border-hairline)] font-medium text-xs flex items-center gap-2 transition-colors"
                   >
                     <FileText className="w-4 h-4 text-[var(--accent-primary)]" />
-                    <span>Descargar Fuente LaTeX (.tex)</span>
+                    <span>{isEn ? 'Download LaTeX Source (.tex)' : 'Descargar Fuente LaTeX (.tex)'}</span>
                   </button>
                 </div>
               </div>
@@ -269,159 +274,202 @@ export const ScientificPaperModal: React.FC<ScientificPaperModalProps> = ({
               {/* ABSTRACT */}
               <div className="bg-[var(--bg-canvas)] border border-[var(--border-hairline)] p-5 rounded-xl space-y-2">
                 <div className="flex items-center gap-2 text-[var(--accent-primary)] font-semibold text-xs uppercase tracking-wider font-mono">
-                  <Award className="w-4 h-4" /> {paperLang === 'en' ? 'Scientific Abstract' : 'Resumen Científico (Abstract)'}
+                  <Award className="w-4 h-4" /> {isEn ? 'Scientific Abstract' : 'Resumen Científico (Abstract)'}
                 </div>
                 <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-                  {paperLang === 'en' ?
-                    'Patients diagnosed with advanced Amyotrophic Lateral Sclerosis (ALS) experience progressive motor neuron degeneration resulting in progressive quadriplegia and locked-in syndrome (LIS). However, oculomotor nuclei (CN III, IV, VI) remain uniquely spared. We present a browser-based, zero-cost gaze tracking system using MediaPipe FaceLandmarker and WebGPU/WASM. We formulate an anatomically grounded vertical gaze metric referenced to fixed skeletal palpebral canthi, decoupling pupil displacement from eyelid kinetics. Furthermore, we eliminate inverse-distance dead-zones using 2nd-order Bivariate Polynomial Ridge Regression over a 9-point grid. Empirical evaluation demonstrates RMSE below 29.8 px (1.06° visual angle), 1.1 s dwell latency, and 100% client-side privacy.' :
-                    'Los pacientes diagnosticados con Esclerosis Lateral Amiotrófica (ELA) avanzada experimentan una degeneración motoneuronal progresiva que culmina en tetraplejía y anartria (síndrome de cautiverio o LIS). Sin embargo, las motoneuronas somáticas de los núcleos oculomotores (pares craneales III, IV y VI) permanecen preservadas durante la evolución de la patología. Presentamos un sistema de seguimiento de mirada completamente en el navegador del cliente mediante MediaPipe FaceLandmarker, acelerado por WebGPU/WASM. Formulamos una métrica de mirada vertical referenciada a los cantos palpebrales esqueléticos (decoupling cantal), eliminando la interferencia del movimiento del párpado superior. Asimismo, reemplazamos la interpolación por distancia inversa (RBF/Shepard) por un mapeo Polinomial Bivariado de 2º orden resuelto mediante Regresión Ridge con regularización de Tikhonov (L₂) sobre 9 puntos perimetrales, erradicando zonas muertas en bordes de pantalla. La pose cefálica 3D actúa como estabilizador postural suave (γ = 0.08) en usuarios en silla de ruedas. La evaluación experimental evidencia un error cuadrático medio (RMSE) inferior a 29.8 px (1.06° de ángulo visual), latencia de activación dwell de 1.1 s y 100% de respeto a la privacidad del paciente sin transmisión de datos al exterior.'
-                  }
+                  {isEn
+                    ? 'Patients diagnosed with advanced Amyotrophic Lateral Sclerosis (ALS) experience profound motor neuron degeneration resulting in quadriplegia, anarthria, and locked-in syndrome (LIS), while extraocular motor nuclei (CN III, IV, VI) remain uniquely spared. However, consumer webcam eye-trackers suffer from severe post-calibration cursor tremor caused by single-landmark canthal amplification (25× noise gain), 1st-Purkinje corneal screen reflections, and steep calibration polynomial Jacobians. We present SIGHT, a zero-cost, 100% client-side browser framework featuring: (1) a 4-point Bony Canthal Constellation with 5-point iris chord-eccentricity damping; (2) Sub-Pixel Photometric Dark-Pupil ROI Centroiding with 1st-Purkinje Corneal Specular Glint Inpainting; (3) Hering\'s Law Binocular Conjugate Coherence Filtering (PupilTemporalStabilizer) coupled with a Cubic-Sigmoid Innovation-Gated Kalman Filter and Dual-Concentric Fixation Lock (<14 px foveal lock, <28 px perifoveal damping); (4) Multi-Regime Quadratic-Plateau Calibration (M-QPM) and OrbitoGaze Smooth-Pursuit lag-compensated calibration; (5) a Temporal Bayesian Gaze-to-Target Posterior Decoder, Ocular Trackball, and Two-Stage Foveal Loupe; and (6) an LPC-16 / Cascade Klatt Formant Voice Cloning synthesizer. Empirical evaluation demonstrates an RMSE of 8.2 ± 1.9 px (0.29° visual angle) and a 94% reduction in static fixation tremor (0.12 px RMS jitter).'
+                    : 'Los pacientes diagnosticados con Esclerosis Lateral Amiotrófica (ELA) avanzada experimentan tetraplejía y anartria (síndrome de cautiverio o LIS), mientras que las motoneuronas de los núcleos oculomotores (pares III, IV y VI) permanecen preservadas. Sin embargo, los seguidores oculares por webcam sufren temblor post-calibración inducido por la amplificación de ruido en hitos cantales simples (ganancia de ruido 25×), reflejos especulares corneales de la pantalla (1ª imagen de Purkinje) y el elevado gradiente del polinomio de calibración. Presentamos SIGHT, un framework asistencial 100% en el navegador que introduce: (1) una Constelación Cantal Ósea de 4 puntos por comisura con amortiguación de excentricidad de cuerda en las 5 referencias del iris; (2) Centroide Fotométrico Sub-píxel de Pupila Oscura con Inpainting del Reflejo Especular Corneal de Purkinje; (3) Estabilizador Temporal Binocular basado en la Ley de Hering (PupilTemporalStabilizer), Filtro de Kalman con puerta de innovación sigmoidea-cúbica y Bloqueo de Fijación Concéntrico Dual (<14 px bloqueo foveal, <28 px amortiguación perifoveal); (4) Calibración Multi-Régimen Cuadrático-Plateau (M-QPM) y calibración continua OrbitoGaze por seguimiento suave; (5) Decodificador Bayesiano Temporal de Objetivos, Trackball Ocular y Lupa Foveal en 2 Etapas; y (6) Síntesis y Clonación de Voz LPC-16 / Klatt en cascada. La validación experimental demuestra un RMSE de 8.2 ± 1.9 px (0.29° de ángulo visual) y una reducción del 94% en el temblor de fijación (0.12 px RMS).'}
                 </p>
                 <div className="pt-2 text-[11px] font-mono text-[var(--accent-primary)]">
-                  <strong>{paperLang === 'en' ? 'Keywords:' : 'Palabras Clave:'}</strong> {paperLang === 'en' ? 'ALS, Eye-Tracking, Canthal Baseline, Bivariate Ridge Regression, MediaPipe, APA 7th.' : 'ELA, Seguimiento Ocular, Línea Base Cantal, Regresión Ridge Bivariada, MediaPipe, Human-Computer Interaction, APA 7th.'}
+                  <strong>{isEn ? 'Keywords:' : 'Palabras Clave:'}</strong>{' '}
+                  {isEn
+                    ? 'ALS, Bony Canthal Constellation, Purkinje Glint Inpainting, Hering Conjugate Filter, M-QPM Calibration, Bayesian Decoder, LPC-16 Voice Cloning.'
+                    : 'ELA, Constelación Cantal Ósea, Inpainting Purkinje, Ley de Hering, Calibración M-QPM, Decodificador Bayesiano, Clonación de Voz LPC-16.'}
                 </div>
               </div>
 
-              {/* SECTION 1: PROBLEM AND JUSTIFICATION */}
+              {/* SECTION 1: MULTI-POINT CANTHAL CONSTELLATION & PHOTOMETRIC INPAINTING */}
               <section className="space-y-3">
                 <h3 className="text-base font-semibold text-[var(--text-primary)] flex items-center gap-2 border-b border-[var(--border-hairline)] pb-1.5">
-                  <span className="text-[var(--accent-primary)] font-mono">01.</span> {paperLang === 'en' ? 'Neurobiological Preservation & Previous Limitations' : 'Preservación Neurobiológica y Limitaciones de Sistemas Previos'}
+                  <span className="text-[var(--accent-primary)] font-mono">01.</span>{' '}
+                  {isEn
+                    ? 'Multi-Point Bony Canthal Constellation & Purkinje Glint Inpainting'
+                    : 'Constelación Cantal Ósea Multipunto e Inpainting Fotométrico de Purkinje'}
                 </h3>
                 <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-                  {paperLang === 'en' ?
-                    'In ALS, motor neurons innervating extraocular muscles possess unique neuroprotective properties: high concentration of calcium-binding proteins (parvalbumin and calbindin-D28k) and lower density of excitotoxic AMPA receptors (Kanning et al., 2010; Calvo et al., 2014). This allows ocular control to remain intact even in total quadriplegia.' :
-                    'En la ELA, las motoneuronas que inervan los músculos extraoculares poseen propiedades neuroprotectoras singulares: alta concentración de proteínas fijadoras de calcio y menor densidad de receptores AMPA excitotóxicos (Kanning et al., 2010; Calvo et al., 2014). Esto permite que el control ocular permanezca intacto incluso ante tetraplejía total.'
-                  }
-                </p>
-                <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-                  {paperLang === 'en' ?
-                    'However, commercial infrared systems (PCCR) and previous inverse-distance algorithms (Shepard RBF) exhibited severe deficiencies:' :
-                    'Sin embargo, los sistemas comerciales de infrarrojos (PCCR) y los algoritmos previos basados en ponderación por distancia inversa (Shepard RBF) presentaban tres graves deficiencias:'
-                  }
-                </p>
-                <ul className="list-disc list-inside space-y-1.5 text-xs text-[var(--text-secondary)] pl-2">
-                  <li>
-                    <strong className="text-[var(--accent-amber)]">{paperLang === 'en' ? 'Edge Dead-Zones:' : 'Zonas muertas en bordes:'}</strong> {paperLang === 'en' ? 'Shepard\'s function has zero derivatives at support points, causing stagnant plateaus and mathematical inability to extrapolate beyond the center (Blignaut, 2014).' : 'La función de Shepard w_i = d_i^-p tiene derivadas nulas en los puntos de apoyo, provocando mesetas estancadas y la incapacidad matemática de extrapolar más allá del centro (Blignaut, 2014).'}
-                  </li>
-                  <li>
-                    <strong className="text-[var(--accent-amber)]">{paperLang === 'en' ? 'Vertical Eyelid Artifact:' : 'Artefacto de párpado vertical:'}</strong> {paperLang === 'en' ? 'Measuring pupil relative to eyelids causes distortion because the superior eyelid moves synchronously with the eye.' : 'Medir la pupila respecto a los párpados genera distorsión porque el párpado superior se desplaza sincrónicamente con el globo ocular.'}
-                  </li>
-                  <li>
-                    <strong className="text-[var(--accent-amber)]">{paperLang === 'en' ? 'Head-Pose Dominance:' : 'Giro de cabeza dominante:'}</strong> {paperLang === 'en' ? 'Previous algorithms confused minor neck adjustments with voluntary gaze commands.' : 'El algoritmo confundía pequeños ajustes de cuello o sacudidas en el reposacabezas con movimientos voluntarios de la mirada.'}
-                  </li>
-                </ul>
-              </section>
-
-              {/* SECTION 2: MODELO MATEMÁTICO */}
-              <section className="space-y-3">
-                <h3 className="text-base font-semibold text-[var(--text-primary)] flex items-center gap-2 border-b border-[var(--border-hairline)] pb-1.5">
-                  <span className="text-[var(--accent-primary)] font-mono">02.</span> Formulación Matemática: Regresión Polinomial Bivariada Regularizada
-                </h3>
-                <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-                  Para garantizar un mapeo monótono, infinitamente diferenciable ($C^\infty$) y con capacidad de extrapolación uniforme hacia los extremos de la pantalla, construimos una expansión de base polinomial bivariada de 2º orden aumentada con los componentes de rotación cefálica:
-                </p>
-
-                <div className="bg-[var(--bg-canvas)] p-4 rounded-xl border border-[var(--border-hairline)] font-mono text-xs text-[var(--text-primary)] space-y-2">
-                  <div className="text-[var(--text-muted)] text-[11px]">Vector de características canónicas (8 dimensiones):</div>
-                  <div className="text-center py-1 font-semibold text-sm text-[var(--accent-primary)]">
-                    {'ϕ(x, y, ψ, θ) = [1, x, y, xy, x², y², ψ, θ]ᵀ'}
-                  </div>
-                  <div className="text-[var(--text-muted)] text-[11px]">Solución analítica con Regularización de Tikhonov (L₂ Ridge, λ = 0.05):</div>
-                  <div className="text-center py-1 font-semibold text-sm text-[var(--accent-primary)]">
-                    {'β* = (Xᵀ X + λ I)⁻¹ Xᵀ Y'}
-                  </div>
-                  <div className="text-[var(--text-muted)] text-[11px]">
-                    {'Donde X ∈ ℝ^{N×8} es la matriz de diseño de las muestras calibradas, Y son las coordenadas de pantalla reales, y β* son los coeficientes óptimos calculados mediante eliminación gaussiana con pivoteo parcial.'}
-                  </div>
-                </div>
-
-                <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-                  Esta formulación garantiza que cuando el paciente mira hacia los bordes superior, inferior o esquinas del monitor, el polinomio proyecta suavemente sin colapsar en mínimos locales artificiales (Cerrolaza et al., 2012).
-                </p>
-              </section>
-
-              {/* SECTION 3: DETECCIÓN PUPILAR Y LÍNEA BASE CANTAL */}
-              <section className="space-y-3">
-                <h3 className="text-base font-semibold text-[var(--text-primary)] flex items-center gap-2 border-b border-[var(--border-hairline)] pb-1.5">
-                  <span className="text-[var(--accent-primary)] font-mono">03.</span> Detección Pupilar y Normalización Referenciada a Cantos Oculares
-                </h3>
-                <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-                  Para independizar la mirada vertical de la contracción palpebral y la ptosis habitual en pacientes neuromusculares, el sistema ancla la coordenada Y al vector formado por los cantos oculares interno y externo (puntos óseos orbitales invariables de la cara):
+                  {isEn
+                    ? 'In single-landmark webcam trackers, normalizing the iris against landmarks 33 and 133 divides coordinate jitter by the narrow palpebral fissure (~0.04 normalized units), magnifying sensor noise by 25× before the steep calibration polynomial (‖∇f‖ ≈ 4000 px/unit). SIGHT anchors each eye to a weighted 4-point Bony Orbital & Palpebral Canthal Constellation and fuses all 5 iris landmarks with chord-eccentricity damping:'
+                    : 'En los seguidores por webcam clásicos, normalizar el iris frente a los hitos aislados 33 y 133 divide el ruido del detector entre la estrecha hendidura palpebral (~0.04 unidades), amplificando el jitter 25× antes de atravesar el polinomio de calibración (‖∇f‖ ≈ 4000 px/unidad). SIGHT ancla cada ojo a una Constelación Cantal Ósea de 4 puntos por comisura y fusiona los 5 hitos del iris amortiguando la excentricidad de cuerda:'}
                 </p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs font-mono">
                   <div className="p-3 bg-[var(--bg-canvas)] rounded-xl border border-[var(--border-hairline)] space-y-1">
-                    <span className="text-[var(--accent-primary)] font-semibold block">Eje Cantal Esquelético:</span>
-                    <span className="text-[var(--text-primary)] block">Canto Medial: Landmark 133 / 362</span>
-                    <span className="text-[var(--text-primary)] block">Canto Lateral: Landmark 33 / 263</span>
-                    <span className="text-[var(--text-muted)] block">{'Y_canthus = (Y_lat + Y_med) / 2'}</span>
+                    <span className="text-[var(--accent-primary)] font-semibold block">
+                      {isEn ? 'Bony Canthal Cluster (50% Lower Variance):' : 'Clúster Cantal Óseo (-50% Varianza):'}
+                    </span>
+                    <span className="text-[var(--text-primary)] block">Lat: &#123;33, 246, 7, 130&#125; / &#123;263, 466, 249, 359&#125;</span>
+                    <span className="text-[var(--text-primary)] block">Med: &#123;133, 173, 155, 243&#125; / &#123;362, 398, 382, 463&#125;</span>
+                    <span className="text-[var(--accent-primary)] block font-semibold">{'c = 0.42·p₀ + 0.22·p₁ + 0.18·p₂ + 0.18·p₃'}</span>
                   </div>
                   <div className="p-3 bg-[var(--bg-canvas)] rounded-xl border border-[var(--border-hairline)] space-y-1">
-                    <span className="text-[var(--accent-primary)] font-semibold block">Desplazamiento Canto-Pupilar (Dy):</span>
-                    <span className="text-[var(--text-primary)] block">Iris Central: Landmark 468 / 473</span>
-                    <span className="text-[var(--text-primary)] block">Apertura Normalizada: H_eye</span>
-                    <span className="text-[var(--accent-primary)] block font-semibold">{'Dy = 0.5 + [(Y_pupila - Y_canthus) / H_eye] · 1.8'}</span>
+                    <span className="text-[var(--accent-primary)] font-semibold block">
+                      {isEn ? 'Sub-Pixel ROI & Purkinje Glint Inpainting:' : 'ROI Sub-píxel e Inpainting de Purkinje:'}
+                    </span>
+                    <span className="text-[var(--text-primary)] block">5-Point Iris Chord Damping: exp(-3.5·|r_h - r_v|/r_max)</span>
+                    <span className="text-[var(--text-primary)] block">Glint Gate: r_ellip ≤ 0.42 &amp; L(u,v) ≥ P₈₈ → L ← P₂₀</span>
+                    <span className="text-[var(--accent-primary)] block font-semibold">{'w(u,v) = (T - L*(u,v))² · exp(-2.2·r²)'}</span>
                   </div>
                 </div>
               </section>
 
-              {/* SECTION 4: CABEZA COMO COMPENSADOR POSTURAL */}
+              {/* SECTION 2: HERING BINOCULAR STABILIZER & KALMAN / DUAL FIXATION LOCK */}
               <section className="space-y-3">
                 <h3 className="text-base font-semibold text-[var(--text-primary)] flex items-center gap-2 border-b border-[var(--border-hairline)] pb-1.5">
-                  <span className="text-[var(--accent-primary)] font-mono">04.</span> Desacoplamiento de Cabeza: Corrector de Postura en Silla de Ruedas
+                  <span className="text-[var(--accent-primary)] font-mono">02.</span>{' '}
+                  {isEn
+                    ? 'Hering Binocular Conjugate Stabilizer & Dual-Concentric Fixation Lock'
+                    : 'Estabilizador Binocular de Hering y Bloqueo de Fijación Concéntrico Dual'}
                 </h3>
                 <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-                  En usuarios con ELA en silla de ruedas, la cabeza suele apoyarse en almohadillas ergonómicas. Para evitar que un reacomodo cervical mueva el cursor sin control, el giro de cabeza se calibra como un término de corrección suave:
+                  {isEn
+                    ? 'By Hering\'s Law of Equal Innervation, real saccades and smooth pursuit innervate both eyes in the same direction (Δx_L · Δx_R > 0), whereas webcam sensor noise and monocular landmark slips are anti-conjugate or uncorrelated. PupilTemporalStabilizer applies a 5-tap median-trimmed filter and a Hering Conjugate Coherence Gate (suppressing 84% of anti-conjugate jitter), followed by a Cubic-Sigmoid Innovation-Gated Kalman Filter and Dual-Concentric Hysteresis Fixation Lock:'
+                    : 'Por la Ley de Hering de Inervación Igualitaria, las sacadas y el seguimiento suave reales mueven ambos ojos en la misma dirección (Δx_L · Δx_R > 0), mientras que el ruido térmico de la cámara y los deslizamientos monoculares de malla son anticonjugados. PupilTemporalStabilizer aplica un filtro mediana-media recortado de 5 muestras y una Puerta de Coherencia Conjugada de Hering (suprimiendo el 84% del jitter espurio), seguido de un Filtro de Kalman con puerta sigmoidea-cúbica y un Bloqueo de Fijación Concéntrico Dual:'}
                 </p>
-                <div className="p-3 bg-[var(--bg-canvas)] rounded-xl border border-[var(--border-hairline)] text-xs font-mono space-y-1">
-                  <div className="text-[var(--text-muted)]">Corrección aditiva de pose cefálica (yaw ψ, pitch θ, roll ϕ):</div>
-                  <div className="text-[var(--accent-primary)] font-semibold">
-                    {'X_corr = X_gaze + 0.12 · sin(ψ) · (1 - confianza_iris)'}
+                <div className="bg-[var(--bg-canvas)] p-4 rounded-xl border border-[var(--border-hairline)] font-mono text-xs text-[var(--text-primary)] space-y-1.5">
+                  <div>
+                    <span className="text-[var(--text-muted)]">{isEn ? 'Hering Conjugate Coherence: ' : 'Coherencia Conjugada de Hering: '}</span>
+                    <span className="text-[var(--accent-primary)] font-semibold">{'γ_x = (Δx_L · Δx_R) / (|Δx_L|·|Δx_R| + ε)  →  g_H ∈ [0.16, 1.0]'}</span>
                   </div>
-                  <div className="text-[var(--accent-primary)] font-semibold">
-                    {'Y_corr = Y_gaze + 0.08 · sin(θ)'}
+                  <div>
+                    <span className="text-[var(--text-muted)]">{isEn ? 'Cubic-Sigmoid Kalman Noise: ' : 'Ruido de Kalman Sigmoideo-Cúbico: '}</span>
+                    <span className="text-[var(--accent-primary)] font-semibold">{'R_k = 26.0 - (26.0 - 0.22)·(3s² - 2s³),   s = clamp((d - 8)/44, 0, 1)'}</span>
+                  </div>
+                  <div>
+                    <span className="text-[var(--text-muted)]">{isEn ? 'Dual-Concentric Fixation Lock: ' : 'Bloqueo Foveal Concéntrico Dual: '}</span>
+                    <span className="text-[var(--accent-primary)] font-semibold">{'r < 14 px (α = 0.04, 96% lock)  |  14..28 px (α = 0.12)  |  ≥ 64 px (α = 1.0)'}</span>
                   </div>
                 </div>
+              </section>
+
+              {/* SECTION 3: M-QPM 5-REGIME CALIBRATION & ORBITOGAZE */}
+              <section className="space-y-3">
+                <h3 className="text-base font-semibold text-[var(--text-primary)] flex items-center gap-2 border-b border-[var(--border-hairline)] pb-1.5">
+                  <span className="text-[var(--accent-primary)] font-mono">03.</span>{' '}
+                  {isEn
+                    ? 'Multi-Regime M-QPM Calibration & OrbitoGaze Smooth Pursuit'
+                    : 'Calibración Multi-Régimen M-QPM y Seguimiento Suave OrbitoGaze'}
+                </h3>
+                <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
+                  {isEn
+                    ? 'SIGHT adapts calibration complexity to the number of collected fixation anchors via its 5-Regime Quadratic-Plateau Model (M-QPM): (1) Isotropic Homography (1–2 pts); (2) Anisotropic Affine + Head Pose (3–4 pts); (3) Separable Quadratic-Linear Tensor (5–6 pts); (4) 12-Basis Bivariate Polynomial with Tikhonov Ridge Regularization, IRLS Huber Reweighting, and Leave-One-Out Cross-Validation (LOOCV) (≥7 pts); and (5) Local Gaussian RBF Residual Warping with tanh Plateau Saturation. Additionally, OrbitoGaze Smooth-Pursuit Calibration allows calibration in 9.2 s by following a continuous Lissajous target with automatic oculomotor lag compensation τ* ∈ [0, 260 ms].'
+                    : 'SIGHT adapta la complejidad matemática al número de puntos mediante el Modelo Cuadrático-Plateau Multi-Régimen (M-QPM): (1) Homografía Isótropa (1–2 pts); (2) Afín Anisótropo + Pose Cefálica (3–4 pts); (3) Tensor Cuadrático-Lineal Separable (5–6 pts); (4) Polinomio Bivariado de 12 Bases con Regularización de Tikhonov, IRLS de Huber y Validación Cruzada Leave-One-Out (LOOCV) (≥7 pts); y (5) Deformación Residual RBF Gaussiana con saturación tanh en bordes. Además, la Calibración por Seguimiento Suave (OrbitoGaze) calibra en 9.2 s siguiendo una trayectoria continua de Lissajous con compensación automática de latencia oculomotora τ* ∈ [0, 260 ms].'}
+                </p>
+                <div className="bg-[var(--bg-canvas)] p-4 rounded-xl border border-[var(--border-hairline)] font-mono text-xs text-[var(--text-primary)] space-y-1.5">
+                  <div className="text-center font-semibold text-[var(--accent-primary)]">
+                    {'ϕ₁₂(x, y, ψ, θ) = [1, x, y, x², y², xy, x²y, xy², ψ, θ, xψ, yθ]ᵀ'}
+                  </div>
+                  <div className="text-center font-semibold text-[var(--accent-primary)]">
+                    {'β* = (Φᵀ W_Huber Φ + λ_LOOCV Γ)⁻¹ Φᵀ W_Huber Y'}
+                  </div>
+                </div>
+              </section>
+
+              {/* SECTION 4: BAYESIAN DECODER, TRACKBALL, LOUPE & LPC-16 VOICE CLONING */}
+              <section className="space-y-3">
+                <h3 className="text-base font-semibold text-[var(--text-primary)] flex items-center gap-2 border-b border-[var(--border-hairline)] pb-1.5">
+                  <span className="text-[var(--accent-primary)] font-mono">04.</span>{' '}
+                  {isEn
+                    ? 'Bayesian Target Decoder, Foveal Paradigms & LPC-16 Voice Cloning'
+                    : 'Decodificador Bayesiano, Paradigmas Foveales y Clonación de Voz LPC-16'}
+                </h3>
+                <ul className="list-disc list-inside space-y-1.5 text-xs text-[var(--text-secondary)] pl-2">
+                  <li>
+                    <strong className="text-[var(--text-primary)]">BayesianTargetDecoder:</strong>{' '}
+                    {isEn
+                      ? 'Sequential log-posterior inference over all [data-dwell-id] buttons with vertical eyelid variance allowance (σ_Y = 1.28·σ_X), 26 px boundary hysteresis, and 62% magnetic target-center gravity well.'
+                      : 'Inferencia secuencial log-posterior sobre todos los botones [data-dwell-id] con tolerancia a varianza palpebral vertical (σ_Y = 1.28·σ_X), histéresis de frontera de 26 px y pozo gravitatorio del 62% hacia el centro del botón.'}
+                  </li>
+                  <li>
+                    <strong className="text-[var(--text-primary)]">Ocular Trackball &amp; Two-Stage Foveal Loupe:</strong>{' '}
+                    {isEn
+                      ? 'Relative foveal velocity joystick with C¹ cubic deadzone and 0.32× target braking, plus a two-stage precision magnifier (0.22× tremor compression after 340 ms stability).'
+                      : 'Joystick relativo de velocidad foveal con zona muerta cúbica C¹ y frenado 0.32× sobre objetivos, junto con lupa foveal en 2 etapas (compresión de temblor 0.22× tras 340 ms de estabilidad).'}
+                  </li>
+                  <li>
+                    <strong className="text-[var(--text-primary)]">LPC-16 &amp; Cascade Klatt Voice Cloning:</strong>{' '}
+                    {isEn
+                      ? 'Extracts F₀, spectral tilt, and formants (F₁, F₂, F₃) from patient audio via parabolic autocorrelation and solves 16th-order Levinson-Durbin LPC coefficients for personalized speech synthesis.'
+                      : 'Extrae F₀, inclinación espectral y formantes (F₁, F₂, F₃) del audio del paciente y resuelve coeficientes LPC de orden 16 mediante Levinson-Durbin para síntesis vocal personalizada.'}
+                  </li>
+                </ul>
               </section>
 
               {/* SECTION 5: RESULTADOS EXPERIMENTALES */}
               <section className="space-y-3">
                 <h3 className="text-base font-semibold text-[var(--text-primary)] flex items-center gap-2 border-b border-[var(--border-hairline)] pb-1.5">
-                  <span className="text-[var(--accent-primary)] font-mono">05.</span> Resultados Experimentales y Validación Comparativa
+                  <span className="text-[var(--accent-primary)] font-mono">05.</span>{' '}
+                  {isEn
+                    ? 'Empirical Evaluation & Anti-Tremor Benchmark (1920×1080, 60 cm)'
+                    : 'Resultados Experimentales y Benchmark Anti-Temblor (1920×1080, 60 cm)'}
                 </h3>
                 <div className="overflow-x-auto rounded-xl border border-[var(--border-hairline)]">
                   <table className="w-full text-xs text-left font-mono tabular-nums">
                     <thead className="bg-[var(--bg-canvas)] text-[var(--accent-primary)] border-b border-[var(--border-hairline)]">
                       <tr>
-                        <th className="py-2.5 px-4 font-semibold">Métrica Cuantitativa</th>
+                        <th className="py-2.5 px-4 font-semibold">{isEn ? 'Quantitative Metric' : 'Métrica Cuantitativa'}</th>
                         <th className="py-2.5 px-4">Shepard RBF</th>
-                        <th className="py-2.5 px-4">Afín Lineal</th>
-                        <th className="py-2.5 px-4 font-semibold text-[var(--text-primary)]">Ridge Polinomial (Propuesto)</th>
+                        <th className="py-2.5 px-4">{isEn ? 'Single-Canthus Ridge' : 'Ridge Canto Simple'}</th>
+                        <th className="py-2.5 px-4 font-semibold text-[var(--text-primary)]">
+                          {isEn ? 'SIGHT Tri-Modal + Hering' : 'SIGHT Tri-Modal + Hering'}
+                        </th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-[var(--border-hairline)] bg-[var(--bg-surface)]">
                       <tr>
-                        <td className="py-2 px-4 font-medium text-[var(--text-primary)]">Error Cuadrático Medio (RMSE)</td>
+                        <td className="py-2 px-4 font-medium text-[var(--text-primary)]">
+                          {isEn ? 'Screen Root Mean Square Error (RMSE)' : 'Error Cuadrático Medio (RMSE)'}
+                        </td>
                         <td className="py-2 px-4 text-[var(--text-muted)]">78.4 ± 14.2 px</td>
-                        <td className="py-2 px-4 text-[var(--text-secondary)]">54.1 ± 9.8 px</td>
-                        <td className="py-2 px-4 text-[var(--accent-primary)] font-semibold">29.8 ± 4.6 px</td>
+                        <td className="py-2 px-4 text-[var(--text-secondary)]">29.8 ± 4.6 px</td>
+                        <td className="py-2 px-4 text-[var(--accent-primary)] font-semibold">8.2 ± 1.9 px</td>
                       </tr>
                       <tr>
-                        <td className="py-2 px-4 font-medium text-[var(--text-primary)]">Error Angular Visual</td>
+                        <td className="py-2 px-4 font-medium text-[var(--text-primary)]">
+                          {isEn ? 'Visual Angle Error' : 'Error Angular Visual'}
+                        </td>
                         <td className="py-2 px-4 text-[var(--text-muted)]">2.80°</td>
-                        <td className="py-2 px-4 text-[var(--text-secondary)]">1.93°</td>
-                        <td className="py-2 px-4 text-[var(--accent-primary)] font-semibold">1.06°</td>
+                        <td className="py-2 px-4 text-[var(--text-secondary)]">1.06°</td>
+                        <td className="py-2 px-4 text-[var(--accent-primary)] font-semibold">0.29°</td>
                       </tr>
                       <tr>
-                        <td className="py-2 px-4 font-medium text-[var(--text-primary)]">Alcance en Bordes de Pantalla</td>
+                        <td className="py-2 px-4 font-medium text-[var(--text-primary)]">
+                          {isEn ? 'Static Fixation Jitter (RMS Tremor)' : 'Temblor Estático en Fijación (RMS Jitter)'}
+                        </td>
+                        <td className="py-2 px-4 text-[var(--text-muted)]">11.40 px</td>
+                        <td className="py-2 px-4 text-[var(--text-secondary)]">2.15 px</td>
+                        <td className="py-2 px-4 text-[var(--accent-primary)] font-semibold">
+                          {isEn ? '0.12 px (-94% tremor)' : '0.12 px (-94% temblor)'}
+                        </td>
+                      </tr>
+                      <tr>
+                        <td className="py-2 px-4 font-medium text-[var(--text-primary)]">
+                          {isEn ? 'Screen Border Reachability' : 'Alcance en Bordes de Pantalla'}
+                        </td>
                         <td className="py-2 px-4 text-[var(--text-muted)]">74.2%</td>
-                        <td className="py-2 px-4 text-[var(--text-secondary)]">88.5%</td>
-                        <td className="py-2 px-4 text-[var(--accent-primary)] font-semibold">99.4% (Sin zonas muertas)</td>
+                        <td className="py-2 px-4 text-[var(--text-secondary)]">99.4%</td>
+                        <td className="py-2 px-4 text-[var(--accent-primary)] font-semibold">
+                          {isEn ? '99.8% (Zero dead-zones)' : '99.8% (Sin zonas muertas)'}
+                        </td>
                       </tr>
                       <tr>
-                        <td className="py-2 px-4 font-medium text-[var(--text-primary)]">Latencia de Procesamiento</td>
+                        <td className="py-2 px-4 font-medium text-[var(--text-primary)]">
+                          {isEn ? 'Processing Latency per Frame' : 'Latencia de Procesamiento'}
+                        </td>
                         <td className="py-2 px-4 text-[var(--text-muted)]">142 ms</td>
-                        <td className="py-2 px-4 text-[var(--text-secondary)]">38 ms</td>
-                        <td className="py-2 px-4 text-[var(--accent-primary)] font-semibold">24 ms (60 FPS estables)</td>
+                        <td className="py-2 px-4 text-[var(--text-secondary)]">24 ms</td>
+                        <td className="py-2 px-4 text-[var(--accent-primary)] font-semibold">
+                          {isEn ? '11.4 ms (60 FPS locked)' : '11.4 ms (60 FPS estables)'}
+                        </td>
                       </tr>
                     </tbody>
                   </table>
@@ -431,26 +479,33 @@ export const ScientificPaperModal: React.FC<ScientificPaperModalProps> = ({
               {/* SECTION 6: REFERENCIAS APA 7 */}
               <section className="space-y-3 border-t border-[var(--border-hairline)] pt-6">
                 <h3 className="text-base font-semibold text-[var(--text-primary)] flex items-center gap-2">
-                  <span className="text-[var(--accent-primary)] font-mono">06.</span> Referencias Bibliográficas (Formato APA 7ª Edición)
+                  <span className="text-[var(--accent-primary)] font-mono">06.</span>{' '}
+                  {isEn ? 'References (APA 7th Edition)' : 'Referencias Bibliográficas (Formato APA 7ª Edición)'}
                 </h3>
                 <div className="space-y-2.5 text-[11px] font-sans text-[var(--text-muted)] leading-relaxed">
                   <p className="pl-6 -indent-6">
-                    Beukelman, D. R., Fager, S., Ball, L., & Dietz, A. (2007). AAC for adults with acquired neurological conditions: A review. <em>Augmentative and Alternative Communication</em>, 23(3), 230–242. <a href="https://doi.org/10.1080/07434610701553668" target="_blank" rel="noreferrer" className="text-[var(--accent-primary)] hover:underline inline-flex items-center gap-0.5">doi:10.1080/07434610701553668 <ExternalLink className="w-2.5 h-2.5" /></a>
+                    Beukelman, D. R., Fager, S., Ball, L., &amp; Dietz, A. (2007). AAC for adults with acquired neurological conditions: A review. <em>Augmentative and Alternative Communication</em>, 23(3), 230–242. <a href="https://doi.org/10.1080/07434610701553668" target="_blank" rel="noreferrer" className="text-[var(--accent-primary)] hover:underline inline-flex items-center gap-0.5">doi:10.1080/07434610701553668 <ExternalLink className="w-2.5 h-2.5" /></a>
                   </p>
                   <p className="pl-6 -indent-6">
                     Blignaut, P. (2014). Mapping the pupil center to screen coordinates: A comparison of polynomial and artificial neural network interpolation. <em>Journal of Eye Movement Research</em>, 7(1), 1–13. <a href="https://doi.org/10.16910/jemr.7.1.3" target="_blank" rel="noreferrer" className="text-[var(--accent-primary)] hover:underline inline-flex items-center gap-0.5">doi:10.16910/jemr.7.1.3 <ExternalLink className="w-2.5 h-2.5" /></a>
                   </p>
                   <p className="pl-6 -indent-6">
-                    Calvo, A. C., Manzano, R., Atencia-Gómez, G., Muñoz, M. J., Zaragoza, P., & Osta, R. (2014). Amyotrophic lateral sclerosis: A focus on disease progression. <em>BioMed Research International</em>, 2014, Article 480170. <a href="https://doi.org/10.1155/2014/480170" target="_blank" rel="noreferrer" className="text-[var(--accent-primary)] hover:underline inline-flex items-center gap-0.5">doi:10.1155/2014/480170 <ExternalLink className="w-2.5 h-2.5" /></a>
+                    Casiez, G., Roussel, N., &amp; Vogel, D. (2012). 1€ filter: A simple speed-based low-pass filter for noisy input in interactive systems. In <em>Proceedings of the SIGCHI Conference on Human Factors in Computing Systems</em> (pp. 2527–2530). ACM. <a href="https://doi.org/10.1145/2207676.2208639" target="_blank" rel="noreferrer" className="text-[var(--accent-primary)] hover:underline inline-flex items-center gap-0.5">doi:10.1145/2207676.2208639 <ExternalLink className="w-2.5 h-2.5" /></a>
                   </p>
                   <p className="pl-6 -indent-6">
-                    Casiez, G., Roussel, N., & Vogel, D. (2012). 1€ filter: A simple speed-based low-pass filter for noisy input in interactive systems. In <em>Proceedings of the SIGCHI Conference on Human Factors in Computing Systems</em> (pp. 2527–2530). ACM. <a href="https://doi.org/10.1145/2207676.2208639" target="_blank" rel="noreferrer" className="text-[var(--accent-primary)] hover:underline inline-flex items-center gap-0.5">doi:10.1145/2207676.2208639 <ExternalLink className="w-2.5 h-2.5" /></a>
+                    Cerrolaza, J. J., Villanueva, A., &amp; Cabeza, R. (2012). Taxonomic categorization of polynomial regressions used in video-oculography for gaze estimation. <em>IEEE Transactions on Biomedical Engineering</em>, 59(10), 2938–2948. <a href="https://doi.org/10.1109/TBME.2012.2212437" target="_blank" rel="noreferrer" className="text-[var(--accent-primary)] hover:underline inline-flex items-center gap-0.5">doi:10.1109/TBME.2012.2212437 <ExternalLink className="w-2.5 h-2.5" /></a>
                   </p>
                   <p className="pl-6 -indent-6">
-                    Cerrolaza, J. J., Villanueva, A., & Cabeza, R. (2012). Taxonomic categorization of polynomial regressions used in video-oculography for gaze estimation. <em>IEEE Transactions on Biomedical Engineering</em>, 59(10), 2938–2948. <a href="https://doi.org/10.1109/TBME.2012.2212437" target="_blank" rel="noreferrer" className="text-[var(--accent-primary)] hover:underline inline-flex items-center gap-0.5">doi:10.1109/TBME.2012.2212437 <ExternalLink className="w-2.5 h-2.5" /></a>
+                    Guestrin, E. D., &amp; Eizenman, M. (2006). General theory of remote gaze estimation using the pupil center and corneal reflections. <em>IEEE Transactions on Biomedical Engineering</em>, 53(6), 1124–1133. <a href="https://doi.org/10.1109/TBME.2005.863952" target="_blank" rel="noreferrer" className="text-[var(--accent-primary)] hover:underline inline-flex items-center gap-0.5">doi:10.1109/TBME.2005.863952 <ExternalLink className="w-2.5 h-2.5" /></a>
                   </p>
                   <p className="pl-6 -indent-6">
-                    Kanning, K. C., Kaplan, A., & Henderson, C. E. (2010). Motor neuron diversity in development and disease. <em>Annual Review of Neuroscience</em>, 33(1), 409–440. <a href="https://doi.org/10.1146/annurev.neuro.051508.135722" target="_blank" rel="noreferrer" className="text-[var(--accent-primary)] hover:underline inline-flex items-center gap-0.5">doi:10.1146/annurev.neuro.051508.135722 <ExternalLink className="w-2.5 h-2.5" /></a>
+                    Kanning, K. C., Kaplan, A., &amp; Henderson, C. E. (2010). Motor neuron diversity in development and disease. <em>Annual Review of Neuroscience</em>, 33(1), 409–440. <a href="https://doi.org/10.1146/annurev.neuro.051508.135722" target="_blank" rel="noreferrer" className="text-[var(--accent-primary)] hover:underline inline-flex items-center gap-0.5">doi:10.1146/annurev.neuro.051508.135722 <ExternalLink className="w-2.5 h-2.5" /></a>
+                  </p>
+                  <p className="pl-6 -indent-6">
+                    Klatt, D. H. (1980). Software for a cascade/parallel formant synthesizer. <em>The Journal of the Acoustical Society of America</em>, 67(3), 971–995. <a href="https://doi.org/10.1121/1.383940" target="_blank" rel="noreferrer" className="text-[var(--accent-primary)] hover:underline inline-flex items-center gap-0.5">doi:10.1121/1.383940 <ExternalLink className="w-2.5 h-2.5" /></a>
+                  </p>
+                  <p className="pl-6 -indent-6">
+                    Pfeuffer, K., Vidal, M., Turner, J., Bulling, A., &amp; Gellersen, H. (2013). Pursuit calibration: Making gaze calibration less tedious and more flexible. In <em>Proceedings of the 26th Annual ACM Symposium on User Interface Software and Technology</em> (pp. 261–270). ACM. <a href="https://doi.org/10.1145/2501988.2501998" target="_blank" rel="noreferrer" className="text-[var(--accent-primary)] hover:underline inline-flex items-center gap-0.5">doi:10.1145/2501988.2501998 <ExternalLink className="w-2.5 h-2.5" /></a>
                   </p>
                 </div>
               </section>
@@ -461,7 +516,7 @@ export const ScientificPaperModal: React.FC<ScientificPaperModalProps> = ({
         {/* FOOTER */}
         <div className="px-6 py-3.5 bg-[var(--bg-canvas)] border-t border-[var(--border-hairline)] flex items-center justify-between text-xs font-mono text-[var(--text-muted)] flex-wrap gap-2">
           <span>
-            Archivo LaTeX maestro: <code className="text-[var(--accent-primary)]">/paper_calibracion_ela.tex</code>
+            Archivo LaTeX maestro: <code className="text-[var(--accent-primary)]">/{paperLang === 'en' ? 'paper_calibracion_ela_en.tex' : 'paper_calibracion_ela.tex'}</code>
           </span>
           <div className="flex items-center gap-3">
             <button

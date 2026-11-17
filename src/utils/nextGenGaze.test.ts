@@ -9,6 +9,7 @@ import {
   solve3DEyeballVisualAxisRay,
   computePhotometricPupilCentroid,
   fuseGazeChannels,
+  PupilTemporalStabilizer,
 } from './eyeSensorFusion.ts';
 import {
   computeTargetGaussianLikelihood,
@@ -271,5 +272,60 @@ describe('Next-Gen Gaze Detection & Cursor Positioning Suite', () => {
       const released = loupe.update(900, 300, 1450, 1280, 720, false);
       expect(released.stage).toBe('coarse');
     });
+
+    it('computePhotometricPupilCentroid inpaints bright Purkinje corneal glint without centroid bias', () => {
+      const width = 36;
+      const height = 22;
+      const luma = new Float32Array(width * height).fill(185);
+      const trueCx = 18.0;
+      const trueCy = 11.0;
+
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const d2 = (x - trueCx) ** 2 + (y - trueCy) ** 2;
+          luma[y * width + x] = 185 - 150 * Math.exp(-d2 / 9.0);
+        }
+      }
+
+      // Inject an intense specular corneal reflection (Purkinje 1st image = 254 luma) inside the pupil edge
+      luma[11 * width + 19] = 254;
+      luma[11 * width + 20] = 252;
+
+      const res = computePhotometricPupilCentroid(luma, width, height, 18, 11, 12, 7.5);
+      expect(res.active).toBe(true);
+      expect(Math.abs(res.normX * width - trueCx)).toBeLessThan(0.45);
+      expect(Math.abs(res.normY * height - trueCy)).toBeLessThan(0.45);
+    });
+
+    it('PupilTemporalStabilizer suppresses discordant binocular micro-tremor by >80% while passing conjugate saccades with zero lag', () => {
+      const stabilizer = new PupilTemporalStabilizer();
+      stabilizer.update(0.50, 0.50, 0.50, 0.50, 0.50, 0.50);
+
+      // Simulate 16 frames of discordant webcam landmark jitter around 0.50 (left eye +noise, right eye -noise)
+      let maxDeviation = 0;
+      for (let i = 0; i < 16; i++) {
+        const noise = (i % 2 === 0 ? 1 : -1) * 0.0045;
+        const out = stabilizer.update(
+          0.50 + noise,
+          0.50 - noise,
+          0.50 + noise * 1.4,
+          0.50 - noise * 1.4,
+          0.50 - noise * 1.4, // anti-correlated right eye -> discordant landmark noise
+          0.50 + noise * 1.4
+        );
+        const dev = Math.hypot(out.x - 0.50, out.y - 0.50);
+        if (dev > maxDeviation) maxDeviation = dev;
+        expect(out.conjugateCoherence).toBeLessThan(0.5);
+      }
+      // Raw input jitter is hypot(0.0045, 0.0045) = 0.00636; stabilized output must be < 0.0012 (>80% reduction)
+      expect(maxDeviation).toBeLessThan(0.0012);
+
+      // Now execute a voluntary conjugate saccade to (0.68, 0.62) where both eyes move together
+      const saccade = stabilizer.update(0.68, 0.62, 0.68, 0.62, 0.68, 0.62);
+      expect(saccade.conjugateCoherence).toBeGreaterThan(0.85);
+      expect(saccade.x).toBeCloseTo(0.68, 4);
+      expect(saccade.y).toBeCloseTo(0.62, 4);
+    });
   });
 });
+

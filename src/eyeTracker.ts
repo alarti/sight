@@ -16,6 +16,7 @@ import {
   solve3DEyeballVisualAxisRay,
   sampleEyeRoiPhotometricCentroid,
   fuseGazeChannels,
+  PupilTemporalStabilizer,
 } from "./utils/eyeSensorFusion.ts";
 
 export type { CalibrationSample, EyeTrackingData, HeadPoseData, CalibrationAlgorithm };
@@ -72,8 +73,8 @@ export class OneEuroFilter {
 }
 
 /**
- * 2D Constant-Velocity State-Space Kalman Filter with Saccadic Innovation Gate:
- * Tracks [x, y, vx, vy]^T and adapts measurement noise R_k based on Mahalanobis innovation
+ * 2D Constant-Velocity State-Space Kalman Filter with Continuous Cubic-Sigmoid Mahalanobis Innovation Gate:
+ * Tracks [x, y, vx, vy]^T and adapts measurement noise R_k and velocity damping continuously
  * so resting fixations achieve sub-pixel stability while voluntary saccades incur zero lag.
  */
 export class KalmanGazeFilter {
@@ -101,25 +102,39 @@ export class KalmanGazeFilter {
     // 1. State Prediction
     const predX = this.x + this.vx * dt;
     const predY = this.y + this.vy * dt;
-    const qPos = 2.4;
-    const qVel = 14.0;
+    const qPos = 1.8;
+    const qVel = 11.0;
     this.pPos += this.pVel * dt * dt + qPos;
     this.pVel += qVel * dt;
 
-    // 2. Innovation & Mahalanobis Saccadic Gate
+    // 2. Innovation & Continuous Mahalanobis Saccadic Gate
     const innovX = measX - predX;
     const innovY = measY - predY;
     const innovDist = Math.hypot(innovX, innovY);
 
-    // Adaptive measurement noise R: calm fixation damping (< 16px), smooth pursuit (16-48px), near-zero lag saccade (> 48px)
-    const rMeas = innovDist > 48 ? 0.25 : innovDist > 16 ? 2.2 : 10.0;
+    let rMeas: number;
+    let velDamping: number;
+    if (innovDist <= 22) {
+      // Deep fixation regime: strong measurement noise rejection & velocity zeroing to prevent post-saccadic bounce
+      rMeas = 26.0;
+      velDamping = innovDist <= 10 ? 0.08 : 0.22;
+    } else if (innovDist <= 64) {
+      // Smooth pursuit regime: cubic-sigmoid transition
+      const t = (innovDist - 22) / 42.0;
+      const smoothT = t * t * (3 - 2 * t);
+      rMeas = 26.0 * (1 - smoothT) + 1.4 * smoothT;
+      velDamping = 0.22 + 0.48 * smoothT;
+    } else {
+      // Voluntary saccade regime: near-zero lag snap
+      rMeas = 0.22;
+      velDamping = 0.72;
+    }
 
     const kPos = this.pPos / (this.pPos + rMeas);
     const kVel = (this.pVel * dt) / (this.pPos + rMeas);
 
     this.x = predX + kPos * innovX;
     this.y = predY + kPos * innovY;
-    const velDamping = innovDist <= 16 ? 0.45 : 0.75;
     this.vx = (this.vx + kVel * (innovX / dt)) * velDamping;
     this.vy = (this.vy + kVel * (innovY / dt)) * velDamping;
 
@@ -143,14 +158,17 @@ export class BrowserAIEyeTracker {
   private faceLandmarker: FaceLandmarker | null = null;
   private isInitialized = false;
 
-  // Pre-mapping 1€ filters in normalized [0, 1] pupil space:
-  // Tuned for fast diagonal saccades across corners while filtering resting micro-tremor
-  private rawPupilFilterX = new OneEuroFilter(1.4, 26.0, 1.0);
-  private rawPupilFilterY = new OneEuroFilter(1.4, 26.0, 1.0);
+  // Pre-mapping 5-tap median-trimmed + binocular conjugate stabilizer & low-jitter 1€ filters in normalized [0, 1] pupil space:
+  // Eliminates landmark quantization tremor BEFORE non-linear calibration surface amplification
+  private pupilStabilizer = new PupilTemporalStabilizer();
+  private rawPupilFilterX = new OneEuroFilter(0.36, 4.2, 1.0);
+  private rawPupilFilterY = new OneEuroFilter(0.36, 4.2, 1.0);
+  private headYawFilter = new OneEuroFilter(0.28, 1.2, 1.0);
+  private headPitchFilter = new OneEuroFilter(0.28, 1.2, 1.0);
 
   private kalmanFilter = new KalmanGazeFilter();
-  private filterX = new OneEuroFilter(0.95, 0.025, 1.0);
-  private filterY = new OneEuroFilter(0.95, 0.025, 1.0);
+  private filterX = new OneEuroFilter(0.45, 0.014, 1.0);
+  private filterY = new OneEuroFilter(0.45, 0.014, 1.0);
 
   private sensitivityX = 14.0;
   private sensitivityY = 14.0;
@@ -858,12 +876,20 @@ export class BrowserAIEyeTracker {
             videoH
           );
           if (photoL.active) {
+            const dLx = photoL.refinedNormX - leftIrisX;
+            const dLy = photoL.refinedNormY - leftIrisY;
             leftIrisX = photoL.refinedNormX;
             leftIrisY = photoL.refinedNormY;
+            leftEyeGeo.sphericalGazeX = Math.min(0.98, Math.max(0.02, leftEyeGeo.sphericalGazeX - dLx * 2.1));
+            leftEyeGeo.sphericalGazeY = Math.min(0.98, Math.max(0.02, leftEyeGeo.sphericalGazeY + dLy * 2.6));
           }
           if (photoR.active) {
+            const dRx = photoR.refinedNormX - rightIrisX;
+            const dRy = photoR.refinedNormY - rightIrisY;
             rightIrisX = photoR.refinedNormX;
             rightIrisY = photoR.refinedNormY;
+            rightEyeGeo.sphericalGazeX = Math.min(0.98, Math.max(0.02, rightEyeGeo.sphericalGazeX - dRx * 2.1));
+            rightEyeGeo.sphericalGazeY = Math.min(0.98, Math.max(0.02, rightEyeGeo.sphericalGazeY + dRy * 2.6));
           }
           photometricActive = photoL.active || photoR.active;
         }
@@ -925,8 +951,17 @@ export class BrowserAIEyeTracker {
         sensorMetrics.ray3DY = rawGazeY;
       }
 
+      // Smooth 3D head pose vectors so cervical landmark micro-jitter never pollutes calibrated gaze
+      const smoothYaw = this.headYawFilter.filter(headPose.normYaw, now).value;
+      const smoothPitch = this.headPitchFilter.filter(headPose.normPitch, now).value;
+      const smoothedHeadPose: HeadPoseData = {
+        ...headPose,
+        normYaw: smoothYaw,
+        normPitch: smoothPitch,
+      };
+
       // [Paper Section 4.2: Concordant Compensation Formulation]
-      const { compensatedX, compensatedY } = applyHeadPoseCompensation(rawGazeX, rawGazeY, headPose, this.invertY);
+      const { compensatedX, compensatedY } = applyHeadPoseCompensation(rawGazeX, rawGazeY, smoothedHeadPose, this.invertY);
 
       // 1-Frame Glare / Outlier Spike Confirmation Gate (Hampel persistence filter):
       // Normal pursuit and diagonal saccades <= 0.145 normalized units/frame pass with 0ms delay;
@@ -967,9 +1002,17 @@ export class BrowserAIEyeTracker {
       this.lastCleanRawY = gatedY;
       this.hasCleanSample = true;
 
-      // Pre-mapping 1€ smoothing in normalized [0, 1] pupil coordinates
-      const smoothedRawX = this.rawPupilFilterX.filter(gatedX, now).value;
-      const smoothedRawY = this.rawPupilFilterY.filter(gatedY, now).value;
+      // Pre-mapping 5-tap median-trimmed + binocular conjugate stabilizer & 1€ smoothing in normalized [0, 1] pupil space
+      const stabilizedPupil = this.pupilStabilizer.update(
+        gatedX,
+        gatedY,
+        leftEyeGeo.sphericalGazeX,
+        leftEyeGeo.sphericalGazeY,
+        rightEyeGeo.sphericalGazeX,
+        rightEyeGeo.sphericalGazeY
+      );
+      const smoothedRawX = this.rawPupilFilterX.filter(stabilizedPupil.x, now).value;
+      const smoothedRawY = this.rawPupilFilterY.filter(stabilizedPupil.y, now).value;
 
       const screenW = typeof window !== 'undefined' ? window.innerWidth : 1280;
       const screenH = typeof window !== 'undefined' ? window.innerHeight : 720;
@@ -978,16 +1021,16 @@ export class BrowserAIEyeTracker {
       const mapped = this.mapViaNeuralGrid(
         smoothedRawX,
         smoothedRawY,
-        headPose.normYaw,
-        headPose.normPitch,
+        smoothYaw,
+        smoothPitch,
         screenW,
         screenH
       );
 
-      // 5. 2D State-Space Kalman Filter with Mahalanobis Saccadic Innovation Gate
+      // 5. 2D State-Space Kalman Filter with Continuous Mahalanobis Saccadic Innovation Gate
       const kalmanOut = this.kalmanFilter.update(mapped.x, mapped.y, now);
 
-      // 6. Sliding-Window Spatial Dispersion (I-DT) & Hysteresis Deadband Fixation Lock:
+      // 6. Dual-Concentric Sliding-Window Spatial Dispersion (I-DT) & Hysteresis Fixation Lock:
       let targetFilteredX = kalmanOut.x;
       let targetFilteredY = kalmanOut.y;
 
@@ -1013,16 +1056,24 @@ export class BrowserAIEyeTracker {
         }
         const distToAnchor = Math.hypot(kalmanOut.x - this.fixationAnchorX, kalmanOut.y - this.fixationAnchorY);
 
-        if (distToAnchor < 16 && windowDispersion < 18) {
-          // Focused fixation deadband: calm resting tremor without trapping fine neighboring button shifts
-          this.fixationAnchorX = this.fixationAnchorX * 0.84 + kalmanOut.x * 0.16;
-          this.fixationAnchorY = this.fixationAnchorY * 0.84 + kalmanOut.y * 0.16;
+        if (distToAnchor < 14 && windowDispersion < 16) {
+          // Inner sub-pixel lock zone: rock-solid visual cursor during target fixation (zero visible tremor)
+          this.fixationAnchorX = this.fixationAnchorX * 0.96 + kalmanOut.x * 0.04;
+          this.fixationAnchorY = this.fixationAnchorY * 0.96 + kalmanOut.y * 0.04;
           targetFilteredX = this.fixationAnchorX;
           targetFilteredY = this.fixationAnchorY;
-        } else if (distToAnchor < 52) {
-          // Responsive micro-pursuit glide band between adjacent targets
-          this.fixationAnchorX = this.fixationAnchorX * 0.45 + kalmanOut.x * 0.55;
-          this.fixationAnchorY = this.fixationAnchorY * 0.45 + kalmanOut.y * 0.55;
+        } else if (distToAnchor < 28 && windowDispersion < 24) {
+          // Outer fixation deadband: calm resting micro-tremor without trapping neighboring button shifts
+          this.fixationAnchorX = this.fixationAnchorX * 0.88 + kalmanOut.x * 0.12;
+          this.fixationAnchorY = this.fixationAnchorY * 0.88 + kalmanOut.y * 0.12;
+          targetFilteredX = this.fixationAnchorX;
+          targetFilteredY = this.fixationAnchorY;
+        } else if (distToAnchor < 64) {
+          // Smooth quadratic pursuit glide band between adjacent keyboard keys
+          const normGlide = (distToAnchor - 28) / 36.0;
+          const alpha = 0.14 + 0.56 * normGlide * normGlide;
+          this.fixationAnchorX = this.fixationAnchorX * (1 - alpha) + kalmanOut.x * alpha;
+          this.fixationAnchorY = this.fixationAnchorY * (1 - alpha) + kalmanOut.y * alpha;
           targetFilteredX = this.fixationAnchorX;
           targetFilteredY = this.fixationAnchorY;
         } else {
@@ -1038,7 +1089,7 @@ export class BrowserAIEyeTracker {
       const fY = this.filterY.filter(targetFilteredY, now);
 
       const eyeVel = Math.round(Math.sqrt(fX.velocity * fX.velocity + fY.velocity * fY.velocity));
-      const isFix = eyeVel < 100 || windowDispersion < 18;
+      const isFix = eyeVel < 100 || windowDispersion < 22;
 
       const clampedX = Math.min(screenW - 5, Math.max(5, fX.value));
       const clampedY = Math.min(screenH - 5, Math.max(5, fY.value));

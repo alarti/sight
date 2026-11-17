@@ -265,7 +265,9 @@ export function computePhotometricPupilCentroid(
   const activeSlice = sampleBuf.subarray(0, sampleCount);
   activeSlice.sort();
   const p10 = activeSlice[Math.floor(sampleCount * 0.10)];
+  const p20 = activeSlice[Math.floor(sampleCount * 0.20)];
   const p75 = activeSlice[Math.floor(sampleCount * 0.75)];
+  const p88 = activeSlice[Math.floor(sampleCount * 0.88)];
   const contrast = p75 - p10;
 
   if (contrast < 14) {
@@ -274,6 +276,7 @@ export function computePhotometricPupilCentroid(
   }
 
   const threshold = p75 - 0.34 * contrast;
+  const glintThreshold = Math.max(p88, p75 + 0.35 * contrast);
   let sumW = 0;
   let sumX = 0;
   let sumY = 0;
@@ -285,7 +288,14 @@ export function computePhotometricPupilCentroid(
       const ellip = dx * dx * invRx2 + dy * dy * invRy2;
       if (ellip > 1.0) continue;
 
-      const l = luma[py * width + px];
+      let l = luma[py * width + px];
+      // Corneal Specular Glint (1st Purkinje Image) Inpainting:
+      // Bright screen reflections inside the inner pupillary zone (ellip <= 0.42) are clamped
+      // to dark-pupil intensity (p20) so screen glare never shifts or jitters the centroid.
+      if (ellip <= 0.42 && l >= glintThreshold) {
+        l = p20;
+      }
+
       if (l < threshold) {
         const deficit = (threshold - l) / contrast;
         // Gaussian radial prior around landmark anchor suppresses eyelash border pull
@@ -344,10 +354,11 @@ export function sampleEyeRoiPhotometricCentroid(
   const midY = (outer.y + inner.y) * 0.5 * videoH;
   const lidPxH = Math.max(8, Math.hypot(lower.x - upper.x, lower.y - upper.y) * videoH);
 
-  const cropW = Math.min(videoW, Math.max(20, Math.round(eyePxW * 1.15)));
-  const cropH = Math.min(videoH, Math.max(14, Math.round(lidPxH * 1.35)));
-  const sx = Math.max(0, Math.min(videoW - cropW, Math.round(midX - cropW * 0.5)));
-  const sy = Math.max(0, Math.min(videoH - cropH, Math.round(midY - cropH * 0.5)));
+  const cropW = Math.min(videoW, Math.max(20, eyePxW * 1.15));
+  const cropH = Math.min(videoH, Math.max(14, lidPxH * 1.35));
+  // Sub-pixel floating-point source rectangle avoids 1-px integer quantization jumps in drawImage
+  const sx = Math.max(0, Math.min(videoW - cropW, midX - cropW * 0.5));
+  const sy = Math.max(0, Math.min(videoH - cropH, midY - cropH * 0.5));
 
   const outW = ROI_OUT_W;
   const outH = ROI_OUT_H;
@@ -381,8 +392,8 @@ export function sampleEyeRoiPhotometricCentroid(
   const refinedVideoPxX = sx + res.normX * cropW;
   const refinedVideoPxY = sy + res.normY * cropH;
 
-  // Bounded blend (max 28% weight) so landmark topology constrains extreme lighting shadows
-  const alpha = 0.28 * res.confidence;
+  // Bounded blend (max 34% weight) so dark-pupil intensity locks sub-pixel center while landmarks prevent shadow drift
+  const alpha = 0.34 * res.confidence;
   const refinedNormX = irisNormX * (1 - alpha) + (refinedVideoPxX / videoW) * alpha;
   const refinedNormY = irisNormY * (1 - alpha) + (refinedVideoPxY / videoH) * alpha;
 
@@ -397,7 +408,7 @@ export function sampleEyeRoiPhotometricCentroid(
 /**
  * Multi-Modal Ocular Sensor Fusion:
  * Combines 2D Canthal Equator Projection + 3D Eyeball Optical-Axis Raycasting
- * + Directional ARKit Eye Blendshapes (especially downward eyelid occlusion rescue)
+ * + Deadzone-Gated Directional ARKit Eye Blendshapes (downward eyelid occlusion rescue)
  * into a unified, low-noise gaze representation.
  */
 export function fuseGazeChannels(
@@ -434,11 +445,13 @@ export function fuseGazeChannels(
   let fusedX = hasRay3D ? raw2DX * 0.68 + ray3DX * 0.32 : raw2DX;
   let fusedY = hasRay3D ? raw2DY * 0.68 + ray3DY * 0.32 : raw2DY;
 
-  // Rescues downward/upward eyelid occlusion using directional eye blendshapes
+  // Rescues downward/upward eyelid occlusion using directional eye blendshapes with a C^1 micro-tremor deadzone (0.06)
   const occlusionAvg = (leftEye.upperLidOcclusion + rightEye.upperLidOcclusion) * 0.5;
   const blendSignY = invertY ? -blendshapes.deltaY : blendshapes.deltaY;
+  const absBlendY = Math.abs(blendSignY);
+  const gatedBlendY = absBlendY <= 0.06 ? 0 : Math.sign(blendSignY) * ((absBlendY - 0.06) / 0.94);
   const blendGainY = (0.045 + Math.min(0.065, occlusionAvg * 0.14)) * blendshapes.confidence;
-  const blendContributionY = blendSignY * blendGainY;
+  const blendContributionY = gatedBlendY * blendGainY;
   fusedY = Math.min(0.99, Math.max(0.01, fusedY + blendContributionY));
 
   // Subtle head roll/pitch sanity clamp
@@ -456,3 +469,141 @@ export function fuseGazeChannels(
     photometricActive,
   };
 }
+
+/**
+ * Pre-Calibration Normalized Pupil Temporal Stabilizer & Binocular Conjugate Coherence Filter:
+ * - Enforces Hering's Law of Equal Innervation: true saccades move both eyes conjugately in the same direction,
+ *   whereas MediaPipe landmark quantization noise is uncorrelated/anti-correlated between left and right eyes.
+ * - Applies a 5-frame trimmed-mean filter during resting fixations (< 0.014 normalized units) to eliminate
+ *   high-frequency tremor BEFORE the non-linear calibration surface amplifies it, while passing voluntary
+ *   saccades (>= 0.018 units) with zero delay.
+ */
+export class PupilTemporalStabilizer {
+  private windowX: number[] = [];
+  private windowY: number[] = [];
+  private prevLeftX: number | null = null;
+  private prevLeftY: number | null = null;
+  private prevRightX: number | null = null;
+  private prevRightY: number | null = null;
+  private stableX: number | null = null;
+  private stableY: number | null = null;
+
+  public update(
+    rawX: number,
+    rawY: number,
+    leftGazeX?: number,
+    leftGazeY?: number,
+    rightGazeX?: number,
+    rightGazeY?: number
+  ): { x: number; y: number; conjugateCoherence: number } {
+    if (this.stableX === null || this.stableY === null) {
+      this.stableX = rawX;
+      this.stableY = rawY;
+      this.windowX = [rawX];
+      this.windowY = [rawY];
+      if (leftGazeX !== undefined && rightGazeX !== undefined) {
+        this.prevLeftX = leftGazeX;
+        this.prevLeftY = leftGazeY ?? rawY;
+        this.prevRightX = rightGazeX;
+        this.prevRightY = rightGazeY ?? rawY;
+      }
+      return { x: rawX, y: rawY, conjugateCoherence: 1.0 };
+    }
+
+    // 1. Evaluate Binocular Conjugate Coherence (Hering's Law)
+    let conjugateCoherence = 1.0;
+    if (
+      leftGazeX !== undefined &&
+      leftGazeY !== undefined &&
+      rightGazeX !== undefined &&
+      rightGazeY !== undefined &&
+      this.prevLeftX !== null &&
+      this.prevLeftY !== null &&
+      this.prevRightX !== null &&
+      this.prevRightY !== null
+    ) {
+      const dLx = leftGazeX - this.prevLeftX;
+      const dLy = leftGazeY - this.prevLeftY;
+      const dRx = rightGazeX - this.prevRightX;
+      const dRy = rightGazeY - this.prevRightY;
+      const magL = Math.hypot(dLx, dLy);
+      const magR = Math.hypot(dRx, dRy);
+
+      if (magL > 0.0008 && magR > 0.0008) {
+        const cosSim = (dLx * dRx + dLy * dRy) / (magL * magR);
+        // cosSim in [-1, 1]: +1 = conjugate eye movement, <= 0 = discordant landmark jitter
+        conjugateCoherence = Math.max(0.18, Math.min(1.0, (cosSim + 0.35) / 1.15));
+      }
+      this.prevLeftX = leftGazeX;
+      this.prevLeftY = leftGazeY;
+      this.prevRightX = rightGazeX;
+      this.prevRightY = rightGazeY;
+    }
+
+    // 2. Maintain 5-tap sliding window for trimmed-mean micro-tremor suppression
+    this.windowX.push(rawX);
+    this.windowY.push(rawY);
+    if (this.windowX.length > 5) {
+      this.windowX.shift();
+      this.windowY.shift();
+    }
+
+    const trimmedMean = (arr: number[]): number => {
+      if (arr.length < 3) return arr[arr.length - 1];
+      let minV = Infinity;
+      let maxV = -Infinity;
+      let sum = 0;
+      for (let i = 0; i < arr.length; i++) {
+        const v = arr[i];
+        sum += v;
+        if (v < minV) minV = v;
+        if (v > maxV) maxV = v;
+      }
+      return (sum - minV - maxV) / (arr.length - 2);
+    };
+
+    const trimX = trimmedMean(this.windowX);
+    const trimY = trimmedMean(this.windowY);
+
+    const stepFromStable = Math.hypot(rawX - this.stableX, rawY - this.stableY);
+
+    if (stepFromStable >= 0.022 && conjugateCoherence >= 0.55) {
+      // Confirmed voluntary saccade: snap window and state immediately (0ms lag)
+      this.stableX = rawX;
+      this.stableY = rawY;
+      this.windowX = [rawX];
+      this.windowY = [rawY];
+    } else if (stepFromStable < 0.0065) {
+      // Fine fixation deadband: strong trimmed-mean + conjugate damping eliminates micro-tremor
+      const alpha = 0.22 * conjugateCoherence;
+      this.stableX = this.stableX * (1 - alpha) + trimX * alpha;
+      this.stableY = this.stableY * (1 - alpha) + trimY * alpha;
+    } else {
+      // Smooth pursuit transition band [0.0065 .. 0.022]
+      const t = Math.min(1.0, (stepFromStable - 0.0065) / 0.0155);
+      const targetX = trimX * (1 - t) + rawX * t;
+      const targetY = trimY * (1 - t) + rawY * t;
+      const alpha = (0.28 + 0.62 * t) * Math.max(0.45, conjugateCoherence);
+      this.stableX = this.stableX * (1 - alpha) + targetX * alpha;
+      this.stableY = this.stableY * (1 - alpha) + targetY * alpha;
+    }
+
+    return {
+      x: this.stableX,
+      y: this.stableY,
+      conjugateCoherence,
+    };
+  }
+
+  public reset() {
+    this.windowX = [];
+    this.windowY = [];
+    this.prevLeftX = null;
+    this.prevLeftY = null;
+    this.prevRightX = null;
+    this.prevRightY = null;
+    this.stableX = null;
+    this.stableY = null;
+  }
+}
+
