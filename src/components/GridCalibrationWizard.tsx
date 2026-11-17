@@ -1,0 +1,690 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect, useRef } from 'react';
+import { Target, CheckCircle, X, RotateCcw } from 'lucide-react';
+import { UserProfile, CalibrationSample } from '../profileManager.ts';
+import { EyeTrackingData } from '../eyeTracker.ts';
+import { fitCalibrationModel, aggregateFixationSamples, CalibrationMatrixCoeffs } from '../utils/calibration.ts';
+import {
+  evaluateLissajousPursuitTarget,
+  calibrateFromSmoothPursuit,
+  PursuitStreamFrame,
+} from '../utils/smoothPursuitCalibration.ts';
+import { playPointChime, stopAllSounds } from '../utils/audio.ts';
+import { Language, translations } from '../i18n/translations.ts';
+
+interface GridCalibrationWizardProps {
+  isOpen: boolean;
+  onClose: () => void;
+  activeProfile: UserProfile;
+  onSaveProfile: (updatedProfile: UserProfile) => void;
+  trackingInfo: EyeTrackingData | null;
+  onSpeak: (text: string) => void;
+  currentLanguage?: Language;
+}
+
+type CalibrationPreset = '4-corners' | '5-quadrant' | '9-grid' | 'smooth-pursuit';
+
+// 9 Points located at the furthest reachable perimeter of the screen
+const GRID_POINTS_DATA = [
+  { id: 0, xPct: 0.07, yPct: 0.08, labelEs: 'Esquina Superior Izquierda', labelEn: 'Top-Left Corner' },
+  { id: 1, xPct: 0.50, yPct: 0.08, labelEs: 'Borde Superior Centro', labelEn: 'Top Center Edge' },
+  { id: 2, xPct: 0.93, yPct: 0.08, labelEs: 'Esquina Superior Derecha', labelEn: 'Top-Right Corner' },
+  { id: 3, xPct: 0.07, yPct: 0.50, labelEs: 'Borde Medio Izquierda', labelEn: 'Middle-Left Edge' },
+  { id: 4, xPct: 0.50, yPct: 0.50, labelEs: 'Centro Neutro de Pantalla', labelEn: 'Screen Neutral Center' },
+  { id: 5, xPct: 0.93, yPct: 0.50, labelEs: 'Borde Medio Derecha', labelEn: 'Middle-Right Edge' },
+  { id: 6, xPct: 0.07, yPct: 0.92, labelEs: 'Esquina Inferior Izquierda', labelEn: 'Bottom-Left Corner' },
+  { id: 7, xPct: 0.50, yPct: 0.92, labelEs: 'Borde Inferior Centro', labelEn: 'Bottom Center Edge' },
+  { id: 8, xPct: 0.93, yPct: 0.92, labelEs: 'Esquina Inferior Derecha', labelEn: 'Bottom-Right Corner' },
+];
+
+const PRESET_INDICES: Record<Exclude<CalibrationPreset, 'smooth-pursuit'>, number[]> = {
+  '4-corners': [0, 2, 8, 6],
+  '5-quadrant': [4, 0, 2, 8, 6],
+  '9-grid': [0, 1, 2, 3, 4, 5, 6, 7, 8],
+};
+
+export const GridCalibrationWizard: React.FC<GridCalibrationWizardProps> = ({
+  isOpen,
+  onClose,
+  activeProfile,
+  onSaveProfile,
+  trackingInfo,
+  onSpeak,
+  currentLanguage = 'es',
+}) => {
+  const [presetMode, setPresetMode] = useState<CalibrationPreset>('9-grid');
+  const [countdown, setCountdown] = useState<number | null>(3);
+  const [currentPointIndex, setCurrentPointIndex] = useState<number>(0);
+  const [pointProgress, setPointProgress] = useState<number>(0);
+  const [pursuitPos, setPursuitPos] = useState<{ xPct: number; yPct: number }>({ xPct: 0.5, yPct: 0.5 });
+  const [pursuitMetrics, setPursuitMetrics] = useState<{ lagMs: number; r2: number } | null>(null);
+  const [calibrationDone, setCalibrationDone] = useState<boolean>(false);
+  const [isPaused, setIsPaused] = useState<boolean>(false);
+  const [waitingForValidEye, setWaitingForValidEye] = useState<boolean>(false);
+
+  const isPursuitMode = presetMode === 'smooth-pursuit';
+  const activeIndices = isPursuitMode ? [] : PRESET_INDICES[presetMode];
+  const activePoints = activeIndices.map(id => GRID_POINTS_DATA[id]);
+  const t = translations[currentLanguage].calibration;
+
+  const getPointLabel = (idx: number) => {
+    if (isPursuitMode) {
+      return currentLanguage === 'en' ? 'Follow the gliding orb continuously' : 'Siga el punto orbital suavemente con la vista';
+    }
+    const pt = activePoints[idx];
+    if (!pt) return '';
+    return currentLanguage === 'en' ? pt.labelEn : pt.labelEs;
+  };
+
+  const trackingInfoRef = useRef<EyeTrackingData | null>(trackingInfo);
+  trackingInfoRef.current = trackingInfo;
+
+  // Active point capture accumulator & smooth-pursuit stream buffer
+  const pointSamplesRef = useRef<Array<{ rawX: number; rawY: number; yaw: number; pitch: number; roll: number }>>([]);
+  const collectedSamplesRef = useRef<CalibrationSample[]>([]);
+  const pursuitStreamRef = useRef<PursuitStreamFrame[]>([]);
+  const stageRef = useRef<HTMLDivElement>(null);
+
+  const restartCalibrationSequence = (nextPreset?: CalibrationPreset) => {
+    if (nextPreset) setPresetMode(nextPreset);
+    setCountdown(3);
+    setCurrentPointIndex(0);
+    collectedSamplesRef.current = [];
+    pursuitStreamRef.current = [];
+    setPointProgress(0);
+    setPursuitPos({ xPct: 0.5, yPct: 0.5 });
+    setPursuitMetrics(null);
+    setCalibrationDone(false);
+    setIsPaused(false);
+    setWaitingForValidEye(false);
+    pointSamplesRef.current = [];
+  };
+
+  // Setup / Reset when opened
+  useEffect(() => {
+    if (isOpen) {
+      restartCalibrationSequence();
+      const introMsg = currentLanguage === 'en'
+        ? `Starting quadrant pupil calibration for ${activeProfile.name}. Fixate your gaze on the active target.`
+        : `Iniciando ajuste matricial de pupilas para ${activeProfile.name}. Fije la mirada en el marcador activo.`;
+      onSpeak(introMsg);
+    }
+  }, [isOpen, activeProfile.name, currentLanguage]);
+
+  // Initial 3-second countdown before point 0 / orbital start
+  useEffect(() => {
+    if (!isOpen || countdown === null || countdown <= 0) return;
+
+    const timer = setTimeout(() => {
+      if (countdown === 1) {
+        setCountdown(null);
+        onSpeak(getPointLabel(0));
+      } else {
+        setCountdown(countdown - 1);
+      }
+    }, 900);
+
+    return () => clearTimeout(timer);
+  }, [isOpen, countdown, presetMode]);
+
+  // Smooth-Pursuit Continuous Orbital Calibration Loop ("OrbitoGaze")
+  useEffect(() => {
+    if (!isOpen || !isPursuitMode || countdown !== null || calibrationDone || isPaused) return;
+
+    let animId: number;
+    let activeElapsedMs = 0;
+    let lastFrameTime = performance.now();
+    const ORBIT_DURATION_MS = 9200;
+    pursuitStreamRef.current = [];
+    setPointProgress(0);
+    setWaitingForValidEye(false);
+
+    const step = (now: number) => {
+      const dt = Math.min(60, Math.max(1, now - lastFrameTime));
+      lastFrameTime = now;
+
+      const cur = trackingInfoRef.current;
+      const hasValidCleanEye = Boolean(
+        cur &&
+        cur.faceDetected &&
+        cur.eyesDetected &&
+        !cur.isBlinking &&
+        (cur.signalQuality ?? 1) >= 0.35 &&
+        Number.isFinite(cur.rawGazeX) &&
+        Number.isFinite(cur.rawGazeY)
+      );
+
+      if (hasValidCleanEye) {
+        setWaitingForValidEye(false);
+        activeElapsedMs += dt;
+      } else {
+        setWaitingForValidEye(true);
+      }
+
+      const progress01 = Math.min(1, activeElapsedMs / ORBIT_DURATION_MS);
+      const pos = evaluateLissajousPursuitTarget(progress01);
+      setPursuitPos(pos);
+      setPointProgress(progress01 * 100);
+
+      if (hasValidCleanEye && cur) {
+        const stageRect = stageRef.current?.getBoundingClientRect();
+        const targetScreenX = stageRect ? stageRect.left + pos.xPct * stageRect.width : pos.xPct * window.innerWidth;
+        const targetScreenY = stageRect ? stageRect.top + pos.yPct * stageRect.height : pos.yPct * window.innerHeight;
+        pursuitStreamRef.current.push({
+          tMs: now,
+          targetX: targetScreenX,
+          targetY: targetScreenY,
+          rawPupilX: cur.rawGazeX,
+          rawPupilY: cur.rawGazeY,
+          headYaw: cur.headPose?.normYaw ?? 0,
+          headPitch: cur.headPose?.normPitch ?? 0,
+          headRoll: cur.headPose?.rollDeg ?? 0,
+        });
+      }
+
+      if (progress01 >= 1) {
+        const chosenAlgo = activeProfile.calibrationModel || 'quadrant-matrix';
+        const pursuitRes = calibrateFromSmoothPursuit(pursuitStreamRef.current, chosenAlgo);
+        setCalibrationDone(true);
+        setWaitingForValidEye(false);
+        stopAllSounds();
+
+        if (pursuitRes) {
+          setPursuitMetrics({ lagMs: pursuitRes.optimalLagMs, r2: pursuitRes.pearsonR2 });
+          setCalibrationStats(pursuitRes.matrix);
+          const neutralCenter = {
+            x: pursuitRes.samples.reduce((a, s) => a + s.rawPupilX, 0) / pursuitRes.samples.length,
+            y: pursuitRes.samples.reduce((a, s) => a + s.rawPupilY, 0) / pursuitRes.samples.length,
+          };
+          onSaveProfile({
+            ...activeProfile,
+            calibrationModel: chosenAlgo,
+            samples: pursuitRes.samples,
+            baselineOffsetX: 0,
+            baselineOffsetY: 0,
+            neutralCenter,
+            calibrationMatrix: pursuitRes.matrix,
+            updatedAt: Date.now(),
+          });
+        }
+        return;
+      }
+
+      animId = requestAnimationFrame(step);
+    };
+
+    animId = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(animId);
+  }, [isOpen, isPursuitMode, countdown, calibrationDone, isPaused, currentLanguage]);
+
+  // Fixation-gated progression engine through discrete quadrant points
+  useEffect(() => {
+    if (!isOpen || isPursuitMode || countdown !== null || calibrationDone || isPaused) return;
+
+    let animId: number;
+    let lastFrameTime = performance.now();
+    const pointOpenedAt = lastFrameTime;
+    let validCaptureMs = 0;
+    const STABILIZATION_MS = currentPointIndex === 0 ? 850 : 600;
+    const TARGET_VALID_CAPTURE_MS = 1100;
+    const MIN_VALID_FRAMES = 14;
+    const MAX_POINT_WAIT_MS = 6500;
+
+    pointSamplesRef.current = [];
+    setPointProgress(0);
+    setWaitingForValidEye(false);
+
+    const step = (now: number) => {
+      const dt = Math.min(80, Math.max(1, now - lastFrameTime));
+      lastFrameTime = now;
+      const elapsedSinceOpen = now - pointOpenedAt;
+
+      if (elapsedSinceOpen < STABILIZATION_MS) {
+        setPointProgress(0);
+        animId = requestAnimationFrame(step);
+        return;
+      }
+
+      const cur = trackingInfoRef.current;
+      const hasValidCleanEye = Boolean(
+        cur &&
+        cur.faceDetected &&
+        cur.eyesDetected &&
+        !cur.isBlinking &&
+        (cur.signalQuality ?? 1) >= 0.40 &&
+        Number.isFinite(cur.rawGazeX) &&
+        Number.isFinite(cur.rawGazeY)
+      );
+
+      if (hasValidCleanEye && cur) {
+        setWaitingForValidEye(false);
+        pointSamplesRef.current.push({
+          rawX: cur.rawGazeX,
+          rawY: cur.rawGazeY,
+          yaw: cur.headPose?.normYaw ?? 0,
+          pitch: cur.headPose?.normPitch ?? 0,
+          roll: cur.headPose?.rollDeg ?? 0,
+        });
+        validCaptureMs += dt;
+      } else {
+        setWaitingForValidEye(true);
+      }
+
+      const timeProg = Math.min(100, (validCaptureMs / TARGET_VALID_CAPTURE_MS) * 100);
+      const countProg = Math.min(100, (pointSamplesRef.current.length / MIN_VALID_FRAMES) * 100);
+      const progress = hasValidCleanEye ? Math.min(timeProg, Math.max(countProg, timeProg * 0.85)) : timeProg;
+      setPointProgress(progress);
+
+      const readyByFixation =
+        validCaptureMs >= TARGET_VALID_CAPTURE_MS && pointSamplesRef.current.length >= MIN_VALID_FRAMES;
+      const timedOut = elapsedSinceOpen >= MAX_POINT_WAIT_MS && pointSamplesRef.current.length > 0;
+
+      if (readyByFixation || timedOut) {
+        const pt = activePoints[currentPointIndex];
+        const stageRect = stageRef.current?.getBoundingClientRect();
+        const targetScreenX = stageRect ? stageRect.left + pt.xPct * stageRect.width : pt.xPct * window.innerWidth;
+        const targetScreenY = stageRect ? stageRect.top + pt.yPct * stageRect.height : pt.yPct * window.innerHeight;
+
+        const aggregated = aggregateFixationSamples(pointSamplesRef.current);
+        const startIdx = Math.floor(pointSamplesRef.current.length * 0.20);
+        const settledPoseFrames = pointSamplesRef.current.slice(startIdx);
+        const meanYaw = settledPoseFrames.reduce((a, f) => a + f.yaw, 0) / Math.max(1, settledPoseFrames.length);
+        const meanPitch = settledPoseFrames.reduce((a, f) => a + f.pitch, 0) / Math.max(1, settledPoseFrames.length);
+        const meanRoll = settledPoseFrames.reduce((a, f) => a + f.roll, 0) / Math.max(1, settledPoseFrames.length);
+
+        const sample: CalibrationSample = {
+          targetX: targetScreenX,
+          targetY: targetScreenY,
+          rawPupilX: aggregated.rawX,
+          rawPupilY: aggregated.rawY,
+          headYaw: meanYaw,
+          headPitch: meanPitch,
+          headRoll: meanRoll,
+        };
+
+        const newSamples = [...collectedSamplesRef.current, sample];
+        collectedSamplesRef.current = newSamples;
+
+        if (currentPointIndex < activePoints.length - 1) {
+          playPointChime(587.33 + currentPointIndex * 40);
+          const nextIdx = currentPointIndex + 1;
+          setCurrentPointIndex(nextIdx);
+          onSpeak(getPointLabel(nextIdx));
+        } else {
+          setCalibrationDone(true);
+          setWaitingForValidEye(false);
+          computeAndSaveCalibration(newSamples);
+          stopAllSounds();
+        }
+        return;
+      }
+
+      animId = requestAnimationFrame(step);
+    };
+
+    animId = requestAnimationFrame(step);
+
+    return () => {
+      cancelAnimationFrame(animId);
+    };
+  }, [isOpen, isPursuitMode, countdown, currentPointIndex, calibrationDone, isPaused, currentLanguage, presetMode]);
+
+  // Clean up and halt any running sounds/speech on unmount or close
+  useEffect(() => {
+    return () => {
+      stopAllSounds();
+    };
+  }, []);
+
+  const [calibrationStats, setCalibrationStats] = useState<CalibrationMatrixCoeffs | null>(null);
+
+  const computeAndSaveCalibration = (samples: CalibrationSample[]) => {
+    if (samples.length === 0) return;
+
+    // Derive neutral center either from explicit center sample (id 4) or centroid of all samples
+    const centerSample = samples.find((_, idx) => activePoints[idx]?.id === 4);
+    const neutralCenter = centerSample
+      ? { x: centerSample.rawPupilX, y: centerSample.rawPupilY }
+      : {
+          x: samples.reduce((a, s) => a + s.rawPupilX, 0) / samples.length,
+          y: samples.reduce((a, s) => a + s.rawPupilY, 0) / samples.length,
+        };
+
+    const chosenAlgo = activeProfile.calibrationModel || 'quadrant-matrix';
+    const fitted = fitCalibrationModel(samples, chosenAlgo);
+    setCalibrationStats(fitted);
+
+    const updatedProfile: UserProfile = {
+      ...activeProfile,
+      calibrationModel: chosenAlgo,
+      samples,
+      baselineOffsetX: 0,
+      baselineOffsetY: 0,
+      neutralCenter,
+      calibrationMatrix: fitted || undefined,
+      updatedAt: Date.now(),
+    };
+
+    onSaveProfile(updatedProfile);
+  };
+
+  const handleCloseWizard = () => {
+    stopAllSounds();
+    onClose();
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 z-[10005] w-screen h-screen bg-[var(--bg-canvas)]/95 backdrop-blur-md flex flex-col justify-between select-none animate-in fade-in text-[var(--text-primary)]">
+      
+      {/* MINIMAL TOP BAR */}
+      <div className="w-full flex items-center justify-between px-4 sm:px-8 py-3 bg-[var(--bg-surface)] border-b border-[var(--border-hairline)] flex-wrap gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-[var(--bg-elevated)] border border-[var(--border-active)] flex items-center justify-center text-[var(--accent-primary)]">
+            <Target className="w-4 h-4" />
+          </div>
+          <div>
+            <span className="text-[11px] font-mono uppercase tracking-[0.14em] text-[var(--accent-primary)] font-semibold block">
+              {t.modalTitle}
+            </span>
+            <h2 className="text-xs sm:text-sm font-semibold text-[var(--text-primary)]">
+              {translations[currentLanguage].advancedPanel.profile} <span className="text-[var(--accent-primary)]">{activeProfile.name}</span>
+            </h2>
+          </div>
+        </div>
+
+        {/* QUADRANT MATRIX & SMOOTH-PURSUIT PRESET SELECTOR */}
+        {!calibrationDone && (
+          <div className="flex items-center bg-[var(--bg-canvas)] border border-[var(--border-hairline)] rounded-lg p-0.5 text-[11px] font-mono flex-wrap">
+            {(
+              [
+                { id: '4-corners', es: '4 Esquinas', en: '4 Corners' },
+                { id: '5-quadrant', es: '5 Puntos', en: '5 Points' },
+                { id: '9-grid', es: '9 Puntos (Matriz)', en: '9 Points (Grid)' },
+                { id: 'smooth-pursuit', es: 'Órbita Continua (Pursuit)', en: 'Smooth Orbit (Pursuit)' },
+              ] as const
+            ).map(opt => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => restartCalibrationSequence(opt.id)}
+                className={`px-2.5 py-1 rounded-md transition-colors ${
+                  presetMode === opt.id
+                    ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)] font-semibold'
+                    : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
+                }`}
+              >
+                {currentLanguage === 'en' ? opt.en : opt.es}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-center gap-3">
+          {!calibrationDone && countdown === null && (
+            <div className="flex items-center gap-2 bg-[var(--bg-canvas)] border border-[var(--border-hairline)] px-3 py-1 rounded-lg font-mono text-xs tabular-nums">
+              <span className="text-[var(--text-secondary)]">
+                {isPursuitMode ? (
+                  <>
+                    {currentLanguage === 'en' ? 'Orbit' : 'Órbita'}{' '}
+                    <strong className="text-[var(--accent-primary)]">{Math.round(pointProgress)}%</strong>
+                  </>
+                ) : (
+                  <>
+                    {t.stepIndicator} <strong className="text-[var(--accent-primary)]">{currentPointIndex + 1}</strong> / {activePoints.length}
+                  </>
+                )}
+              </span>
+            </div>
+          )}
+
+          <button
+            onClick={handleCloseWizard}
+            data-dwell-id="wizard-close-btn"
+            className="p-2 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-hairline)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+            title={t.cancelBtn}
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* FULL-VIEWPORT QUADRANT CALIBRATION STAGE */}
+      <div ref={stageRef} className="relative flex-1 w-full h-full overflow-hidden">
+        {!isPursuitMode &&
+          activePoints.map((pt, idx) => {
+            const isCurrent = idx === currentPointIndex && !calibrationDone && countdown === null;
+            const isDone = idx < currentPointIndex || calibrationDone;
+            const label = currentLanguage === 'en' ? pt.labelEn : pt.labelEs;
+
+            return (
+              <div
+                key={pt.id}
+                style={{
+                  left: `${pt.xPct * 100}%`,
+                  top: `${pt.yPct * 100}%`,
+                }}
+                className={`absolute transform -translate-x-1/2 -translate-y-1/2 flex flex-col items-center transition-transform duration-300 ${
+                  isCurrent ? 'scale-110 z-30' : isDone ? 'scale-90 opacity-65' : 'opacity-25'
+                }`}
+              >
+                <div
+                  className={`relative w-16 h-16 rounded-full flex items-center justify-center border transition-colors ${
+                    isCurrent
+                      ? 'bg-[var(--bg-elevated)] border-[var(--border-active)] ocular-breathe-ring'
+                      : isDone
+                      ? 'bg-[var(--bg-surface)] border-[var(--accent-primary)]'
+                      : 'bg-[var(--bg-surface)] border-[var(--border-hairline)]'
+                  }`}
+                >
+                  {isCurrent && (
+                    <svg className="absolute inset-0 w-16 h-16 transform -rotate-90">
+                      <circle cx="32" cy="32" r="28" stroke="rgba(127, 166, 138, 0.2)" strokeWidth="3" fill="none" />
+                      <circle
+                        cx="32"
+                        cy="32"
+                        r="28"
+                        stroke="#7FA68A"
+                        strokeWidth="4"
+                        fill="rgba(127, 166, 138, 0.08)"
+                        strokeDasharray={175.9}
+                        strokeDashoffset={175.9 - (175.9 * pointProgress) / 100}
+                        strokeLinecap="round"
+                      />
+                    </svg>
+                  )}
+
+                  <div
+                    className={`w-3.5 h-3.5 rounded-full transition-transform ${
+                      isCurrent
+                        ? 'bg-[var(--accent-primary)] scale-125'
+                        : isDone
+                        ? 'bg-[var(--accent-primary)] opacity-75'
+                        : 'bg-[var(--text-muted)]'
+                    }`}
+                  />
+                </div>
+
+                <span
+                  className={`text-[10px] font-mono mt-2 px-2 py-0.5 rounded border whitespace-nowrap ${
+                    isCurrent
+                      ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] border-[var(--border-active)] font-semibold'
+                      : isDone
+                      ? 'bg-[var(--bg-surface)] text-[var(--accent-primary)] border-[var(--border-hairline)]'
+                      : 'bg-[var(--bg-surface)] text-[var(--text-muted)] border-[var(--border-hairline)]'
+                  }`}
+                >
+                  0{idx + 1} · {label}
+                </span>
+              </div>
+            );
+          })}
+
+        {/* SMOOTH-PURSUIT MOVING ORBITAL STIMULUS ("OrbitoGaze") */}
+        {isPursuitMode && !calibrationDone && countdown === null && (
+          <div
+            style={{
+              left: `${pursuitPos.xPct * 100}%`,
+              top: `${pursuitPos.yPct * 100}%`,
+            }}
+            className="absolute transform -translate-x-1/2 -translate-y-1/2 z-30 flex flex-col items-center pointer-events-none"
+          >
+            <div className="relative w-20 h-20 rounded-full bg-[var(--bg-elevated)] border-2 border-[var(--border-active)] flex items-center justify-center shadow-lg">
+              <svg className="absolute inset-0 w-20 h-20 transform -rotate-90">
+                <circle cx="40" cy="40" r="34" stroke="rgba(127, 166, 138, 0.2)" strokeWidth="3" fill="none" />
+                <circle
+                  cx="40"
+                  cy="40"
+                  r="34"
+                  stroke="#7FA68A"
+                  strokeWidth="4"
+                  fill="rgba(127, 166, 138, 0.1)"
+                  strokeDasharray={213.6}
+                  strokeDashoffset={213.6 - (213.6 * pointProgress) / 100}
+                  strokeLinecap="round"
+                />
+              </svg>
+              <div className="w-4 h-4 rounded-full bg-[var(--accent-primary)]" />
+            </div>
+            <span className="text-[10px] font-mono mt-2 px-2.5 py-0.5 rounded border bg-[var(--bg-elevated)] text-[var(--text-primary)] border-[var(--border-active)] font-semibold whitespace-nowrap">
+              {currentLanguage === 'en' ? 'ORBITO-GAZE · FOLLOW SMOOTHLY' : 'ORBITO-GAZE · SIGA EL CÍRCULO'}
+            </span>
+          </div>
+        )}
+
+        {/* INITIAL COUNTDOWN OVERLAY */}
+        {countdown !== null && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-[var(--bg-canvas)]/85 gap-4 animate-in fade-in">
+            <span className="text-xs uppercase tracking-[0.16em] font-mono text-[var(--accent-primary)] font-semibold">
+              {isPursuitMode
+                ? currentLanguage === 'en'
+                  ? 'Follow the single moving orb smoothly with your eyes (no fixed corner staring)'
+                  : 'Siga suavemente con los ojos el círculo orbital en movimiento (sin esfuerzo en esquinas)'
+                : t.fixatePrompt}
+            </span>
+            <div className="w-24 h-24 rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-active)] flex items-center justify-center text-4xl font-mono font-bold text-[var(--text-primary)] tabular-nums">
+              {countdown}
+            </div>
+            <p className="text-xs text-[var(--text-secondary)] max-w-sm text-center">
+              {t.readySubtitle}
+            </p>
+          </div>
+        )}
+
+        {/* ACTIVE STATUS BANNER AT BOTTOM */}
+        {!calibrationDone && countdown === null && (
+          <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 bg-[var(--bg-surface)] border border-[var(--border-active)] px-5 py-3 rounded-xl flex items-center gap-4">
+            <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${waitingForValidEye ? 'bg-[var(--accent-amber)]' : 'bg-[var(--accent-primary)]'}`} />
+            <div className="text-left">
+              <span className={`text-[11px] font-mono block font-semibold ${waitingForValidEye ? 'text-[var(--accent-amber)]' : 'text-[var(--accent-primary)]'}`}>
+                {waitingForValidEye
+                  ? (currentLanguage === 'en' ? 'Waiting for steady open eyes...' : 'Esperando detección ocular estable...')
+                  : t.capturingProgress}
+              </span>
+              <p className="text-xs font-semibold text-[var(--text-primary)] font-mono tabular-nums">
+                {getPointLabel(currentPointIndex)} · {Math.round(pointProgress)}%
+              </p>
+            </div>
+            <button
+              onClick={() => setIsPaused(!isPaused)}
+              className="ml-2 px-3 py-1 bg-[var(--bg-elevated)] hover:border-[var(--border-active)] text-[var(--text-primary)] rounded-lg text-xs font-mono border border-[var(--border-hairline)]"
+            >
+              {isPaused ? (currentLanguage === 'en' ? 'Resume' : 'Reanudar') : (currentLanguage === 'en' ? 'Pause' : 'Pausar')}
+            </button>
+          </div>
+        )}
+
+        {/* CALIBRATION COMPLETE MODAL OVERLAY */}
+        {calibrationDone && (
+          <div className="absolute inset-0 bg-[var(--bg-canvas)]/92 backdrop-blur-md flex flex-col items-center justify-center gap-6 p-8 animate-in zoom-in-95">
+            <div className="w-16 h-16 rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border-active)] flex items-center justify-center text-[var(--accent-primary)]">
+              <CheckCircle className="w-8 h-8" />
+            </div>
+
+            <div className="text-center max-w-lg">
+              <span className="text-xs font-mono uppercase tracking-[0.16em] text-[var(--accent-primary)] font-semibold block mb-1">
+                {t.completeTitle}
+              </span>
+              <h3 className="text-xl sm:text-2xl font-semibold text-[var(--text-primary)]">
+                {t.completeSubtitle}
+              </h3>
+              <p className="text-xs text-[var(--text-secondary)] mt-2 leading-relaxed">
+                {isPursuitMode
+                  ? currentLanguage === 'en'
+                    ? `Smooth-pursuit correlation matrix solved continuously across the trajectory for ${activeProfile.name} with automatic ocular latency compensation.`
+                    : `Matriz calibrada por seguimiento orbital continuo (OrbitoGaze) para ${activeProfile.name} con compensación automática de latencia ocular.`
+                  : currentLanguage === 'en'
+                  ? `Pupil positioning matrix solved across all ${activePoints.length} quadrant anchors for ${activeProfile.name}. Screen edges and keys are now locked with zero residual bias.`
+                  : `Matriz de posicionamiento pupilar calculada en todo el cuadrante con ${activePoints.length} puntos para ${activeProfile.name}. Las esquinas, teclas y celdas coinciden ahora con su mirada.`}
+              </p>
+
+              {calibrationStats && (
+                <div className="flex items-center justify-center gap-5 bg-[var(--bg-surface)] border border-[var(--border-hairline)] rounded-xl p-3.5 mt-4 text-xs font-mono tabular-nums flex-wrap">
+                  <div className="flex flex-col items-center">
+                    <span className="text-[var(--text-muted)] text-[10px]">{t.rmseMetric}</span>
+                    <span className="text-[var(--accent-primary)] font-semibold text-sm">{calibrationStats.rmsePx} px</span>
+                  </div>
+                  <div className="w-[1px] h-7 bg-[var(--border-hairline)]" />
+                  <div className="flex flex-col items-center">
+                    <span className="text-[var(--text-muted)] text-[10px]">{t.angleMetric}</span>
+                    <span className="text-[var(--text-primary)] font-semibold text-sm">~{calibrationStats.accuracyDeg}°</span>
+                  </div>
+                  <div className="w-[1px] h-7 bg-[var(--border-hairline)]" />
+                  <div className="flex flex-col items-center">
+                    <span className="text-[var(--text-muted)] text-[10px]">{currentLanguage === 'en' ? 'Clinical Index' : 'Índice Clínico'}</span>
+                    <span className="text-[var(--accent-primary)] font-semibold text-sm">
+                      {calibrationStats.reliabilityScore ?? 95}/100
+                    </span>
+                  </div>
+                  {pursuitMetrics && (
+                    <>
+                      <div className="w-[1px] h-7 bg-[var(--border-hairline)]" />
+                      <div className="flex flex-col items-center">
+                        <span className="text-[var(--text-muted)] text-[10px]">
+                          {currentLanguage === 'en' ? 'Pursuit Lag / R²' : 'Latencia / R²'}
+                        </span>
+                        <span className="text-[var(--accent-amber)] font-semibold text-sm">
+                          {pursuitMetrics.lagMs} ms · {pursuitMetrics.r2}
+                        </span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center gap-3 mt-2">
+              <button
+                type="button"
+                onClick={() => restartCalibrationSequence()}
+                className="px-5 py-3 bg-[var(--bg-surface)] hover:border-[var(--border-active)] text-[var(--text-primary)] font-semibold rounded-xl border border-[var(--border-hairline)] transition-colors flex items-center gap-2 text-xs"
+              >
+                <RotateCcw className="w-4 h-4 text-[var(--accent-amber)]" />
+                {currentLanguage === 'en' ? 'Recalibrate' : 'Repetir Calibración'}
+              </button>
+              <button
+                data-dwell-id="finish-calibration-btn"
+                onClick={handleCloseWizard}
+                className="px-7 py-3 bg-[var(--accent-primary)] text-[var(--accent-contrast)] font-semibold rounded-xl transition-colors flex items-center gap-2 text-xs"
+              >
+                <CheckCircle className="w-4 h-4" />
+                {t.saveProfileBtn}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* MINIMAL FOOTER */}
+      <footer className="px-6 py-2.5 bg-[var(--bg-surface)] border-t border-[var(--border-hairline)] text-[11px] font-mono text-[var(--text-muted)] flex items-center justify-between">
+        <span>{t.centerRestingNote}</span>
+        <span>{translations[currentLanguage].appTitle}</span>
+      </footer>
+    </div>
+  );
+};

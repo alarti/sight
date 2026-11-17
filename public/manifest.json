@@ -1,0 +1,18 @@
+{
+  "name": "Pupil Labs Alpha Lab: Asistente Ocular ELA",
+  "short_name": "Pupil ELA",
+  "description": "Sistema de comunicación asistida mediante seguimiento ocular y síntesis de voz para pacientes con ELA.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#020617",
+  "theme_color": "#020617",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

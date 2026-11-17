@@ -1,0 +1,9 @@
+{
+  "name": "SIGHT - Speech, Interaction and Gaze-based Human Technology",
+  "description": "Advanced 100% client-side privacy-safe neuro-ophthalmic eye-tracking and speech synthesis assistive communication platform for ALS and motor-impaired patients.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

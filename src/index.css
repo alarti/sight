@@ -1,0 +1,95 @@
+@import "tailwindcss";
+
+@layer base {
+  :root,
+  [data-ocular-theme="warm-obsidian"] {
+    --bg-canvas: #121310;
+    --bg-surface: #1A1C18;
+    --bg-elevated: #222520;
+    --bg-sanctuary: #161915;
+    --border-hairline: #2B2F28;
+    --border-active: #7FA68A;
+    --text-primary: #E6E1D6;
+    --text-secondary: #A8A396;
+    --text-muted: #757166;
+    --accent-primary: #7FA68A;
+    --accent-contrast: #111411;
+    --accent-soft: rgba(127, 166, 138, 0.14);
+    --accent-amber: #D19A52;
+    --accent-amber-soft: rgba(209, 154, 82, 0.15);
+    --accent-urgent: #C86D61;
+    --accent-urgent-soft: rgba(200, 109, 97, 0.15);
+  }
+
+  [data-ocular-theme="eink-parchment"] {
+    --bg-canvas: #ECE6D8;
+    --bg-surface: #E2DAC8;
+    --bg-elevated: #D7CEB9;
+    --bg-sanctuary: #E6DFCE;
+    --border-hairline: #C7BEA9;
+    --border-active: #3B6B4C;
+    --text-primary: #22201C;
+    --text-secondary: #545046;
+    --text-muted: #787265;
+    --accent-primary: #3B6B4C;
+    --accent-contrast: #F5F1E8;
+    --accent-soft: rgba(59, 107, 76, 0.14);
+    --accent-amber: #9E6520;
+    --accent-amber-soft: rgba(158, 101, 32, 0.14);
+    --accent-urgent: #A63A2E;
+    --accent-urgent-soft: rgba(166, 58, 46, 0.12);
+  }
+
+  [data-ocular-theme="scotopic-amber"] {
+    --bg-canvas: #0B0907;
+    --bg-surface: #14110D;
+    --bg-elevated: #1D1812;
+    --bg-sanctuary: #110E0B;
+    --border-hairline: #2B2218;
+    --border-active: #C88A42;
+    --text-primary: #CFA063;
+    --text-secondary: #997445;
+    --text-muted: #6B502E;
+    --accent-primary: #C88A42;
+    --accent-contrast: #0D0A07;
+    --accent-soft: rgba(200, 138, 66, 0.15);
+    --accent-amber: #D99B52;
+    --accent-amber-soft: rgba(217, 155, 82, 0.16);
+    --accent-urgent: #B85D43;
+    --accent-urgent-soft: rgba(184, 93, 67, 0.16);
+  }
+
+  body {
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    background-color: var(--bg-canvas);
+    color: var(--text-primary);
+    letter-spacing: 0.01em;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+@keyframes ocularBreathe {
+  0%, 100% {
+    transform: scale(0.92);
+    opacity: 0.35;
+  }
+  50% {
+    transform: scale(1.06);
+    opacity: 0.75;
+  }
+}
+
+.ocular-breathe-ring {
+  animation: ocularBreathe 7s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ocular-breathe-ring {
+    animation: none;
+  }
+}
