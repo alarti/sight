@@ -41,6 +41,15 @@ if (texExists) {
     texContent.includes('Ridge') && texContent.includes('Purkinje') && texContent.includes('Hering'),
     'El artículo LaTeX (ES) debe detallar la Constelación Cantal, Inpainting de Purkinje, Ley de Hering y M-QPM.'
   );
+  verify(
+    'Estándar OpenReview en LaTeX (ES): Proposición 1, Ablación, ITR, Limitaciones y Ética',
+    texContent.includes('proposition') &&
+      texContent.includes('tab:ablation') &&
+      texContent.includes('148.6') &&
+      texContent.includes('sec:limitations') &&
+      texContent.includes('AES-256-GCM'),
+    'El manuscrito LaTeX (ES) debe incluir Proposición formal, Tabla de Ablación, ITR, Limitaciones/Ética y AES-256-GCM.'
+  );
 }
 
 // 2. Check English LaTeX file existence and content
@@ -57,6 +66,15 @@ if (texEnExists) {
       texEnContent.includes('Hering') &&
       texEnContent.includes('M-QPM'),
     'El artículo LaTeX (EN) debe estar sincronizado con todos los avances.'
+  );
+  verify(
+    'Estándar OpenReview en LaTeX (EN): Proposición 1, Ablación, ITR, Limitaciones y Ética',
+    texEnContent.includes('proposition') &&
+      texEnContent.includes('tab:ablation') &&
+      texEnContent.includes('148.6') &&
+      texEnContent.includes('sec:limitations') &&
+      texEnContent.includes('AES-256-GCM'),
+    'El manuscrito LaTeX (EN) debe incluir Proposición formal, Tabla de Ablación, ITR, Limitaciones/Ética y AES-256-GCM.'
   );
 }
 
@@ -78,22 +96,34 @@ if (pdfGenExists) {
     'El PDF debe descargarse como articulo_calibracion_ela_alberto_arce.pdf'
   );
   verify(
-    'Últimos algoritmos en generador PDF (Purkinje, Hering, M-QPM, LPC-16)',
+    'Últimos algoritmos y estándar OpenReview en generador PDF (Purkinje, Hering, M-QPM, LPC-16, Ablación, ITR)',
     pdfContent.includes('Purkinje') &&
       pdfContent.includes('Hering') &&
       pdfContent.includes('M-QPM') &&
-      pdfContent.includes('LPC-16'),
-    'El generador PDF debe incluir todos los últimos avances algorítmicos.'
+      pdfContent.includes('LPC-16') &&
+      pdfContent.includes('148.6') &&
+      pdfContent.includes('OpenReview'),
+    'El generador PDF debe incluir todos los últimos avances algorítmicos y secciones OpenReview.'
+  );
+  verify(
+    'Motor de 16 Ecuaciones Matemáticas 2D Vectoriales en generador PDF',
+    pdfContent.includes('drawEquationCard') &&
+      pdfContent.includes('num: 1,') &&
+      pdfContent.includes('num: 16,') &&
+      pdfContent.includes("doc.setFont('symbol', 'normal')"),
+    'El generador de PDF debe renderizar las 16 ecuaciones matemáticas 2D vectoriales con fuente Symbol y barras de fracción.'
   );
 }
 
-// 4. Check Modal Viewer sync
+// 4. Check Modal Viewer & 2D Math Equations sync
 const modalPath = path.resolve('src/components/ScientificPaperModal.tsx');
-const modalExists = fs.existsSync(modalPath);
-verify('Modal Académico Interactivo', modalExists, 'No se encuentra src/components/ScientificPaperModal.tsx');
+const mathEqPath = path.resolve('src/components/MathEquations.tsx');
+const modalExists = fs.existsSync(modalPath) && fs.existsSync(mathEqPath);
+verify('Modal Académico Interactivo y Motor Tipográfico 2D (MathEquations.tsx)', modalExists, 'No se encuentra ScientificPaperModal.tsx o MathEquations.tsx');
 
 if (modalExists) {
   const modalContent = fs.readFileSync(modalPath, 'utf-8');
+  const mathEqContent = fs.readFileSync(mathEqPath, 'utf-8');
   verify(
     'Botón de descarga PDF en modal',
     modalContent.includes('generateScientificPaperPDF'),
@@ -105,12 +135,24 @@ if (modalExists) {
     'El modal debe mostrar a Alberto Arce Rodríguez como autor en la vista formateada.'
   );
   verify(
-    'Últimos algoritmos en Modal Interactivo (Purkinje, Hering, M-QPM, LPC-16)',
+    'Renderizado de las 16 Ecuaciones 2D en Modal Interactivo y Pestaña de Fórmulas',
+    modalContent.includes('Section1Equations') &&
+      modalContent.includes('Section2Equations') &&
+      modalContent.includes('Section3Equations') &&
+      modalContent.includes('Section4Equations') &&
+      mathEqContent.includes('number={1}') &&
+      mathEqContent.includes('number={16}'),
+    'El modal académico debe renderizar las 16 ecuaciones tipográficas 2D (Section1Equations..Section4Equations).'
+  );
+  verify(
+    'Últimos algoritmos y estándar OpenReview en Modal Interactivo (Purkinje, Hering, M-QPM, LPC-16, Ablación, ITR)',
     modalContent.includes('Purkinje') &&
       modalContent.includes('Hering') &&
       modalContent.includes('M-QPM') &&
-      modalContent.includes('LPC-16'),
-    'El modal académico debe mostrar todas las secciones algorítmicas actualizadas.'
+      modalContent.includes('LPC-16') &&
+      modalContent.includes('148.6') &&
+      modalContent.includes('OpenReview'),
+    'El modal académico debe mostrar todas las secciones algorítmicas y tablas de ablación OpenReview actualizadas.'
   );
 }
 
@@ -122,12 +164,14 @@ verify('Documentación maestra README.md', readmeExists, 'No se encuentra README
 if (readmeExists) {
   const readmeContent = fs.readFileSync(readmePath, 'utf-8');
   verify(
-    'Sincronización de algoritmos en README.md',
+    'Sincronización de algoritmos, 16 ecuaciones matemáticas y estudio de ablación OpenReview en README.md',
     readmeContent.includes('computeRobustCanthalCluster') &&
       readmeContent.includes('PupilTemporalStabilizer') &&
       readmeContent.includes('Purkinje') &&
-      readmeContent.includes('M-QPM'),
-    'README.md debe documentar los últimos algoritmos de detección pupilar y calibración.'
+      readmeContent.includes('M-QPM') &&
+      readmeContent.includes('Mathematical Compendium — Core Equations (1) to (16)') &&
+      readmeContent.includes('148.6'),
+    'README.md debe documentar los últimos algoritmos, las 16 ecuaciones y tablas OpenReview.'
   );
 }
 

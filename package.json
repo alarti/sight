@@ -15,7 +15,11 @@
     "review": "tsx scripts/review_code.ts",
     "clean-code": "tsx scripts/clean_dead_code.ts",
     "update-docs": "tsx scripts/update_docs.ts",
-    "pipeline": "npm run clean-code && npm run lint && npm run test && npm run review && npm run update-docs"
+    "security-audit": "tsx scripts/audit_security_and_clinical.ts",
+    "pipeline": "npm run clean-code && npm run lint && npm run test && npm run review && npm run security-audit && npm run update-docs"
+  },
+  "overrides": {
+    "picomatch": "^4.0.4"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

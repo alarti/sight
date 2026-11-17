@@ -4,7 +4,7 @@
  */
 
 import React from 'react';
-import { Eye, User, Volume2, VolumeX, FileText, Mic, Crosshair, Moon, Sun, Sunset } from 'lucide-react';
+import { Eye, User, Volume2, VolumeX, FileText, Mic, Crosshair, Moon, Sun, Sunset, HeartPulse, BellRing } from 'lucide-react';
 import { UserProfile, OcularTheme } from '../types/index.ts';
 import { Language, translations } from '../i18n/translations.ts';
 
@@ -20,6 +20,8 @@ interface HeaderBarProps {
   onOpenProfilesModal: () => void;
   onOpenPaperModal: () => void;
   onOpenVoiceCloningModal: () => void;
+  onOpenClinicalModal?: () => void;
+  onTriggerSos?: () => void;
   isManualAimingMode?: boolean;
   onToggleManualAimingMode?: () => void;
   ocularTheme?: OcularTheme;
@@ -42,6 +44,8 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   onOpenProfilesModal,
   onOpenPaperModal,
   onOpenVoiceCloningModal,
+  onOpenClinicalModal,
+  onTriggerSos,
   isManualAimingMode = false,
   onToggleManualAimingMode,
   ocularTheme = 'warm-obsidian',
@@ -154,6 +158,22 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
 
       {/* Zone 3: Ocular Rest Sanctuary Action & Instrument Controls */}
       <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+        {/* EMERGENCY SOS QUICK BUTTON */}
+        {onTriggerSos && (
+          <button
+            type="button"
+            data-dwell-id="btn-header-sos"
+            onClick={onTriggerSos}
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors border border-[var(--accent-urgent)] bg-[var(--bg-canvas)] text-[var(--accent-urgent)] hover:bg-[var(--accent-urgent)] hover:text-white whitespace-nowrap shrink-0 ${
+              hoveredDwellId === 'btn-header-sos' ? 'ring-2 ring-[var(--accent-urgent)]' : ''
+            }`}
+            title={isEn ? 'Emergency SOS Caregiver Siren' : 'Alarma Acústica SOS al Cuidador'}
+          >
+            <BellRing className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">SOS</span>
+          </button>
+        )}
+
         {/* DEDICATED OCULAR REST / SLEEP CURTAIN BUTTON */}
         {onToggleOcularRestMode && (
           <button
@@ -201,6 +221,22 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
             EN
           </button>
         </div>
+
+        {/* CLINICAL PRO / SaMD SUITE BUTTON */}
+        {onOpenClinicalModal && (
+          <button
+            type="button"
+            data-dwell-id="btn-clinical-pro-modal"
+            onClick={onOpenClinicalModal}
+            className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors bg-[var(--bg-canvas)] border border-[var(--border-hairline)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 ${
+              hoveredDwellId === 'btn-clinical-pro-modal' ? 'ring-2 ring-[var(--accent-primary)]' : ''
+            }`}
+            title={isEn ? 'Clinical Pro SaMD Telemetry, HL7 FHIR & AES-256 Vault' : 'Suite Clínica SaMD, HL7 FHIR y Bóveda AES-256'}
+          >
+            <HeartPulse className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+            <span className="hidden xl:inline">{isEn ? 'Clinical SaMD' : 'Suite Clínica'}</span>
+          </button>
+        )}
 
         {/* VOICE CLONING / IMITATION BUTTON */}
         <button

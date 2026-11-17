@@ -1711,6 +1711,13 @@ export async function speakWithNeuralAISynthesizer(
     return true;
   }
 
+  // Enforce GDPR / HIPAA Clinical Privacy: only transmit text to cloud TTS if cloudNeuralConsent is explicitly granted
+  if (profile.cloudNeuralConsent === false) {
+    if (onFallback) onFallback();
+    speakWithMLLPCSynthesizer(cleanText, profile, language, onEnd);
+    return false;
+  }
+
   const voiceName = profile.neuralVoiceName || getRecommendedNeuralVoice(profile.fundamentalFreqHz, profile.detectedTimbre);
   const cacheKey = `${language}_${voiceName}_${cleanText.toLowerCase()}`;
 
@@ -1747,7 +1754,7 @@ export async function speakWithNeuralAISynthesizer(
 
     if (res.ok) {
       const data = await res.json();
-      if (data && data.audioDataUrl) {
+      if (data && typeof data.audioDataUrl === 'string' && data.audioDataUrl.startsWith('data:audio/')) {
         neuralSpeechAudioCache.set(cacheKey, data.audioDataUrl);
 
         await playAcousticallyMorphedSpeech(
@@ -1769,6 +1776,10 @@ export async function speakWithNeuralAISynthesizer(
   return false;
 }
 
+function isLocalDataAudioUrl(url: unknown): url is string {
+  return typeof url === 'string' && /^data:audio\/[a-zA-Z0-9.+-]+(;[^,]+)*,/.test(url);
+}
+
 /**
  * High-Fidelity Vocalization:
  * 1. Checks if the phrase is stored in the user's authentic Personal Voice Bank (100% genuine user recording).
@@ -1787,25 +1798,25 @@ export function playBankedPhraseOrSynthesize(
 ): void {
   const normText = normalizePhraseKey(text);
 
-  // 1. Check Personal Voice Banking
+  // 1. Check Personal Voice Banking (only allow verified local data:audio/ URLs)
   if (voiceProfile.bankedPhrases && voiceProfile.bankedPhrases.length > 0) {
     const matched = voiceProfile.bankedPhrases.find(bp => normalizePhraseKey(bp.phrase) === normText);
-    if (matched && matched.audioUrl) {
+    if (matched && isLocalDataAudioUrl(matched.audioUrl)) {
       const audio = new Audio(matched.audioUrl);
       audio.volume = voiceProfile.volume ?? 1.0;
       audio.onended = () => { if (onEnd) onEnd(); };
       audio.onerror = () => {
-        speakWithNeuralAISynthesizer(text, voiceProfile, language, onEnd);
+        speakWithMLLPCSynthesizer(text, voiceProfile, language, onEnd);
       };
       audio.play().catch(() => {
-        speakWithNeuralAISynthesizer(text, voiceProfile, language, onEnd);
+        speakWithMLLPCSynthesizer(text, voiceProfile, language, onEnd);
       });
       return;
     }
   }
 
   // 2. If the user recorded an audio sample in the studio and it matches the prompt phrase
-  if (voiceProfile.recordedAudioUrl) {
+  if (isLocalDataAudioUrl(voiceProfile.recordedAudioUrl)) {
     const defaultEsPrompt = normalizePhraseKey('Hola, ahora el sintetizador habla imitando el tono y ritmo de mi voz grabada.');
     const defaultEnPrompt = normalizePhraseKey('Hello, the speech synthesizer is now imitating the pitch and rhythm of my recorded voice.');
     if (normText === defaultEsPrompt || normText === defaultEnPrompt) {
@@ -1813,20 +1824,20 @@ export function playBankedPhraseOrSynthesize(
       audio.volume = voiceProfile.volume ?? 1.0;
       audio.onended = () => { if (onEnd) onEnd(); };
       audio.onerror = () => {
-        speakWithNeuralAISynthesizer(text, voiceProfile, language, onEnd);
+        speakWithMLLPCSynthesizer(text, voiceProfile, language, onEnd);
       };
       audio.play().catch(() => {
-        speakWithNeuralAISynthesizer(text, voiceProfile, language, onEnd);
+        speakWithMLLPCSynthesizer(text, voiceProfile, language, onEnd);
       });
       return;
     }
   }
 
-  // 3. Engine routing
-  const engine = voiceProfile.synthesisEngine || 'neural-ai';
-  if (engine === 'neural-ai' || engine === 'hybrid') {
-    speakWithNeuralAISynthesizer(text, voiceProfile, language, onEnd);
-  } else if (engine === 'ml-lpc') {
+  // 3. Engine routing (respecting explicit GDPR/HIPAA cloudNeuralConsent)
+  const engine = voiceProfile.synthesisEngine || 'ml-lpc';
+  if ((engine === 'neural-ai' || engine === 'hybrid') && voiceProfile.cloudNeuralConsent === true) {
+    void speakWithNeuralAISynthesizer(text, voiceProfile, language, onEnd);
+  } else if (engine === 'ml-lpc' || engine === 'neural-ai' || engine === 'hybrid') {
     speakWithMLLPCSynthesizer(text, voiceProfile, language, onEnd);
   } else if (engine === 'formant-acoustic') {
     speakWithFormantSynthesizer(text, voiceProfile, language, onEnd);
@@ -1834,4 +1845,5 @@ export function playBankedPhraseOrSynthesize(
     synthesizeClonedSpeech(text, voiceProfile, language, onEnd);
   }
 }
+
 

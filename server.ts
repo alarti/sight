@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -10,23 +10,99 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json({ limit: '512kb' }));
+// Trust first hop proxy (Cloud Run / reverse proxy) without allowing arbitrary X-Forwarded-For spoofing
+app.set('trust proxy', 1);
+app.disable('x-powered-by');
+
+// Strict HTTP Security Headers Middleware (SaMD / Clinical Grade)
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader(
+    'Permissions-Policy',
+    'camera=(self), microphone=(self), geolocation=(), payment=(), usb=()'
+  );
+  res.setHeader(
+    'Content-Security-Policy',
+    [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdn.jsdelivr.net",
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      "font-src 'self' data: https://fonts.gstatic.com",
+      "img-src 'self' data: blob:",
+      "media-src 'self' data: blob:",
+      "connect-src 'self' https://cdn.jsdelivr.net https://storage.googleapis.com https://fonts.googleapis.com https://fonts.gstatic.com",
+      "worker-src 'self' blob:",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "frame-ancestors 'self'",
+    ].join('; ')
+  );
+  next();
+});
+
+app.use(express.json({ limit: '256kb' }));
 
 const TTS_MAX_TEXT_LENGTH = 600;
 const TTS_RATE_LIMIT_WINDOW_MS = 60_000;
 const TTS_MAX_REQUESTS_PER_WINDOW = 30;
+const TTS_MAX_TRACKED_IPS = 2_000;
 const ttsRequestLog = new Map<string, number[]>();
+
+// Periodic garbage collection of stale rate-limit entries to prevent memory exhaustion
+const cleanupTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [ip, timestamps] of ttsRequestLog.entries()) {
+    const active = timestamps.filter(ts => now - ts < TTS_RATE_LIMIT_WINDOW_MS);
+    if (active.length === 0) {
+      ttsRequestLog.delete(ip);
+    } else {
+      ttsRequestLog.set(ip, active);
+    }
+  }
+}, TTS_RATE_LIMIT_WINDOW_MS);
+cleanupTimer.unref?.();
 
 function isRateLimited(ip: string): boolean {
   const now = Date.now();
-  const recent = (ttsRequestLog.get(ip) || []).filter(ts => now - ts < TTS_RATE_LIMIT_WINDOW_MS);
+  const safeIp = String(ip || 'local').slice(0, 64);
+
+  // Evict oldest tracked IP if map exceeds capacity (LRU bound)
+  if (!ttsRequestLog.has(safeIp) && ttsRequestLog.size >= TTS_MAX_TRACKED_IPS) {
+    const oldestKey = ttsRequestLog.keys().next().value;
+    if (oldestKey) ttsRequestLog.delete(oldestKey);
+  }
+
+  const recent = (ttsRequestLog.get(safeIp) || []).filter(ts => now - ts < TTS_RATE_LIMIT_WINDOW_MS);
   if (recent.length >= TTS_MAX_REQUESTS_PER_WINDOW) {
-    ttsRequestLog.set(ip, recent);
+    ttsRequestLog.set(safeIp, recent);
     return true;
   }
   recent.push(now);
-  ttsRequestLog.set(ip, recent);
+  ttsRequestLog.set(safeIp, recent);
   return false;
+}
+
+const VALID_VOICES = ['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'] as const;
+const VALID_LANGUAGES = ['es', 'en'] as const;
+
+/**
+ * Sanitizes free-form style or timbre descriptors to prevent LLM Prompt Injection
+ */
+function sanitizeDescriptor(input: unknown, maxLen = 80): string {
+  if (typeof input !== 'string') return '';
+  return input
+    .replace(/[^\p{L}\p{N}\s,.-]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen);
+}
+
+function clampNumeric(val: unknown, min: number, max: number, fallback: number): number {
+  const num = Number(val);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.min(max, Math.max(min, num));
 }
 
 // Shared Google Gen AI client for server-side neural speech synthesis
@@ -47,6 +123,7 @@ app.get('/api/health', (_req, res) => {
     status: 'ok', 
     timestamp: new Date().toISOString(),
     neuralTtsAvailable: !!process.env.GEMINI_API_KEY,
+    securityPolicy: 'CSP+RateLimit+Sanitized',
   });
 });
 
@@ -54,13 +131,14 @@ app.get('/api/tts/status', (_req, res) => {
   res.json({
     available: !!process.env.GEMINI_API_KEY,
     model: 'gemini-3.8-flash-lite-tts',
-    voices: ['Kore', 'Puck', 'Charon', 'Fenrir', 'Zephyr'],
+    voices: VALID_VOICES,
   });
 });
 
 /**
  * High-definition Neural AI Text-to-Speech (24kHz Studio Quality)
  * Generates human-grade conversational speech with breath, prosody, and natural warmth.
+ * Protected against prompt injection and parameter tampering.
  */
 app.post('/api/tts', async (req, res) => {
   const clientIp = req.ip || req.socket.remoteAddress || 'local';
@@ -71,22 +149,17 @@ app.post('/api/tts', async (req, res) => {
     });
   }
 
-  const { 
-    text, 
-    language = 'es', 
-    voiceName, 
-    style,
-    fundamentalFreqHz,
-    detectedTimbre,
-    formants,
-    speechRate,
-  } = req.body || {};
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const rawText = body.text;
 
-  if (!text || typeof text !== 'string' || !text.trim()) {
+  if (!rawText || typeof rawText !== 'string' || !rawText.trim()) {
     return res.status(400).json({ error: 'Text is required for TTS synthesis.' });
   }
 
-  if (text.trim().length > TTS_MAX_TEXT_LENGTH) {
+  // Strip control characters from spoken text
+  const cleanText = rawText.replace(/[\u0000-\u001F\u007F]/g, ' ').trim();
+
+  if (cleanText.length > TTS_MAX_TEXT_LENGTH) {
     return res.status(400).json({
       error: `Text exceeds maximum allowed length of ${TTS_MAX_TEXT_LENGTH} characters.`,
       fallback: true,
@@ -113,14 +186,16 @@ app.post('/api/tts', async (req, res) => {
   }
 
   try {
-    const validVoices = ['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'];
-    const f0 = fundamentalFreqHz ? Math.round(fundamentalFreqHz) : 150;
-    const timbre = detectedTimbre || 'natural';
-    const f1 = formants?.f1 || 650;
-    const f2 = formants?.f2 || 1450;
+    const language = VALID_LANGUAGES.includes(body.language) ? body.language : 'es';
+    const f0 = Math.round(clampNumeric(body.fundamentalFreqHz, 65, 450, 150));
+    const timbre = sanitizeDescriptor(body.detectedTimbre, 32) || (language === 'en' ? 'natural' : 'natural');
+    const f1 = Math.round(clampNumeric(body.formants?.f1, 250, 1050, 650));
+    const f2 = Math.round(clampNumeric(body.formants?.f2, 850, 2800, 1450));
+    const safeRate = clampNumeric(body.speechRate, 0.5, 1.8, 0.95);
+    const sanitizedStyle = sanitizeDescriptor(body.style, 100);
 
     // Pick closest gender and register base voice
-    let chosenVoice = 'Zephyr';
+    let chosenVoice: typeof VALID_VOICES[number] = 'Zephyr';
     let expectedBaseF0 = 160;
     if (f0 < 125) {
       chosenVoice = 'Fenrir'; // Deep bass/baritone
@@ -132,15 +207,15 @@ app.post('/api/tts', async (req, res) => {
       chosenVoice = 'Kore'; // High / female
       expectedBaseF0 = 210;
     } else {
-      chosenVoice = voiceName && validVoices.includes(voiceName) ? voiceName : 'Puck';
+      chosenVoice = VALID_VOICES.includes(body.voiceName) ? body.voiceName : 'Puck';
       expectedBaseF0 = 150;
     }
 
     const bioAcousticStyle = language === 'en'
-      ? `Exact bio-acoustic voice clone of a user recording: speaker with fundamental frequency anchored at ${f0} Hz (${timbre} register), vocal tract resonances at F1=${f1}Hz and F2=${f2}Hz, relaxed, steady speaking cadence (${Math.round((speechRate || 0.95)*100)}%). Speak with this specific user's vocal depth, warmth, and oral cavity resonance.`
-      : `Clonado bio-acústico exacto de la voz grabada del usuario: hablante con tono fundamental anclado en ${f0} Hz (registro ${timbre}), resonancias de formantes en F1=${f1}Hz y F2=${f2}Hz, cadencia pausada y tranquila (${Math.round((speechRate || 0.95)*100)}%). Habla con la profundidad vocal, calidez y resonancia faríngea específica de esta persona real.`;
+      ? `Exact bio-acoustic voice clone of a user recording: speaker with fundamental frequency anchored at ${f0} Hz (${timbre} register), vocal tract resonances at F1=${f1}Hz and F2=${f2}Hz, relaxed, steady speaking cadence (${Math.round(safeRate * 100)}%). Speak with this specific user's vocal depth, warmth, and oral cavity resonance.`
+      : `Clonado bio-acústico exacto de la voz grabada del usuario: hablante con tono fundamental anclado en ${f0} Hz (registro ${timbre}), resonancias de formantes en F1=${f1}Hz y F2=${f2}Hz, cadencia pausada y tranquila (${Math.round(safeRate * 100)}%). Habla con la profundidad vocal, calidez y resonancia faríngea específica de esta persona real.`;
 
-    const finalStyle = style ? `${style}. ${bioAcousticStyle}` : bioAcousticStyle;
+    const finalStyle = sanitizedStyle ? `${sanitizedStyle}. ${bioAcousticStyle}` : bioAcousticStyle;
 
     const response = await aiClient.models.generateContent({
       model: 'gemini-3.8-flash-lite-tts',
@@ -149,7 +224,7 @@ app.post('/api/tts', async (req, res) => {
           role: 'user',
           parts: [
             {
-              text: text.trim(),
+              text: cleanText,
               speechMetadata: {
                 style: finalStyle,
               },
@@ -178,10 +253,11 @@ app.post('/api/tts', async (req, res) => {
       voiceName: chosenVoice,
       baseF0: expectedBaseF0,
     });
-  } catch (err: any) {
-    console.error('Error in neural TTS endpoint:', err?.message || err);
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : 'Neural speech generation failed.';
+    console.error('Error in neural TTS endpoint:', errMsg);
     return res.status(500).json({
-      error: err?.message || 'Neural speech generation failed.',
+      error: 'Neural speech generation failed.',
       fallback: true,
     });
   }
@@ -206,3 +282,4 @@ async function startServer() {
 }
 
 startServer();
+

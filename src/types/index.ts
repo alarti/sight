@@ -48,6 +48,7 @@ export interface VoiceProfile {
   // Neural AI Voice (ChatGPT-style) parameters:
   neuralVoiceName?: 'Kore' | 'Puck' | 'Charon' | 'Fenrir' | 'Zephyr';
   neuralStylePrompt?: string;
+  cloudNeuralConsent?: boolean; // Explicit GDPR/HIPAA opt-in for cloud neural TTS synthesis
   // Local NLP & ML Vocoder parameters:
   lpcCoefficients?: number[]; // Autoregressive LPC-16 all-pole filter coefficients
   vtlnWarpFactor?: number; // Vocal Tract Length Normalization factor alpha (0.80 - 1.25)
@@ -56,6 +57,38 @@ export interface VoiceProfile {
   shimmerPercent?: number; // Micro-amplitude variation
   nlpProsodyEnabled?: boolean; // Syllabic lexical stress + Fujisaki intonation contour
   recordedAt?: number;
+}
+
+export interface ClinicalTelemetrySession {
+  id: string;
+  timestamp: number;
+  durationSec: number;
+  dwellSelectionsCount: number;
+  cancelledDwellsCount: number;
+  charactersTyped: number;
+  phrasesVocalized: number;
+  meanSaccadicVelocityPxS: number;
+  calibrationRmsePx: number;
+  calibrationVisualAngleDeg: number;
+  fatigueIndex: number; // [0 - 100] estimated oculomotor fatigue index
+  activeControlParadigm: CursorControlMode;
+}
+
+export interface CaregiverAlertConfig {
+  enabled: boolean;
+  caregiverName: string;
+  webhookUrl?: string; // Optional local nurse call / Home Assistant / Telegram webhook
+  sirenEnabled: boolean;
+  sustainedEyeClosureSosSec: number; // e.g., 3.5s eyes closed emergency trigger
+}
+
+export interface SmartHomeDevice {
+  id: string;
+  nameEs: string;
+  nameEn: string;
+  category: 'lighting' | 'bed' | 'climate' | 'tv' | 'call';
+  state: boolean | string | number;
+  webhookEndpoint?: string;
 }
 
 export type CalibrationAlgorithm = 'quadrant-matrix' | 'tps' | 'polynomial' | 'projective';
@@ -159,6 +192,10 @@ export interface UserProfile {
   neutralCenter?: { x: number; y: number };
   calibrationMatrix?: CalibrationMatrixSnapshot;
   voiceProfile?: VoiceProfile;
+  caregiverConfig?: CaregiverAlertConfig;
+  clinicalSessions?: ClinicalTelemetrySession[];
+  learnedPhraseCounts?: Record<string, number>;
+  kioskWakeLockEnabled?: boolean;
 }
 
 export interface HeadPoseData {

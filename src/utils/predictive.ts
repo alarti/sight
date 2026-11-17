@@ -79,13 +79,92 @@ export const PREDICTIVE_DICTIONARY_EN: Record<string, string[]> = {
   "im": ["I'm doing well, thank you.", "I'm a bit tired today."],
 };
 
-export function getAiAutocompleteSuggestion(text: string, language: Language = 'es'): string {
+export function getCircadianGreetingPhrases(language: Language = 'es', hour: number = new Date().getHours()): string[] {
+  if (language === 'en') {
+    if (hour >= 6 && hour < 12) {
+      return [
+        "Good morning, how did you sleep? Please help me with my morning routine.",
+        "I am thirsty, please give me some water.",
+      ];
+    }
+    if (hour >= 12 && hour < 19) {
+      return [
+        "Good afternoon, I need to change my posture in the wheelchair.",
+        "I am thirsty, please give me some water.",
+      ];
+    }
+    return [
+      "Good evening, I would like to rest my eyes and adjust my bed for the night.",
+      "Please dim the room light so I can rest comfortably.",
+    ];
+  }
+
+  if (hour >= 6 && hour < 12) {
+    return [
+      "Buenos días, ¿cómo habéis dormido? Por favor ayúdame con el aseo de la mañana.",
+      "Tengo sed, por favor dame agua fresca.",
+    ];
+  }
+  if (hour >= 12 && hour < 20) {
+    return [
+      "Buenas tardes, necesito cambiar de postura en la silla.",
+      "Tengo sed, por favor dame agua fresca.",
+    ];
+  }
+  return [
+    "Buenas noches, quiero descansar la vista y acomodar la cama para dormir.",
+    "Por favor, atenúa la luz de la habitación para descansar tranquilo.",
+  ];
+}
+
+export function recordLearnedUserPhrase(
+  currentMap: Record<string, number> | undefined,
+  phrase: string
+): Record<string, number> {
+  const clean = phrase.trim();
+  if (!clean || clean.length < 3 || clean.length > 220) {
+    return currentMap || {};
+  }
+  const next = { ...(currentMap || {}) };
+  next[clean] = (next[clean] || 0) + 1;
+
+  // Keep top 60 most frequent phrases to bound storage size
+  const entries = Object.entries(next);
+  if (entries.length > 60) {
+    entries.sort((a, b) => b[1] - a[1]);
+    return Object.fromEntries(entries.slice(0, 60));
+  }
+  return next;
+}
+
+export function getAiAutocompleteSuggestion(
+  text: string,
+  language: Language = 'es',
+  learnedPhrases?: Record<string, number>
+): string {
   const clean = text.trim().toLowerCase();
   const defaultSentences = language === 'en' ? DEFAULT_PREDICTIVE_SENTENCES_EN : DEFAULT_PREDICTIVE_SENTENCES_ES;
   const dict = language === 'en' ? PREDICTIVE_DICTIONARY_EN : PREDICTIVE_DICTIONARY_ES;
 
+  // 1. Check user's personalized high-frequency learned phrases first
+  if (learnedPhrases && Object.keys(learnedPhrases).length > 0) {
+    const sortedLearned = Object.entries(learnedPhrases)
+      .sort((a, b) => b[1] - a[1])
+      .map(([phrase]) => phrase);
+
+    if (!clean && sortedLearned.length > 0 && (learnedPhrases[sortedLearned[0]] || 0) >= 2) {
+      return sortedLearned[0];
+    }
+
+    if (clean) {
+      const learnedMatch = sortedLearned.find(p => p.toLowerCase().startsWith(clean) && p.toLowerCase() !== clean);
+      if (learnedMatch) return learnedMatch;
+    }
+  }
+
   if (!clean) {
-    return defaultSentences[0];
+    const circadian = getCircadianGreetingPhrases(language);
+    return circadian[0] || defaultSentences[0];
   }
 
   if (dict[clean]) {

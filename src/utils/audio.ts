@@ -136,6 +136,32 @@ export const playKeyTypeChime = () => {
   }
 };
 
+// High-priority Clinical Emergency SOS Siren (alternating 880 Hz / 1320 Hz medical alarm)
+export const playEmergencySosSiren = () => {
+  try {
+    const ctx = getSharedAudioContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const cycles = 4;
+    for (let i = 0; i < cycles; i++) {
+      const start = now + i * 0.36;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(880, start);
+      osc.frequency.setValueAtTime(1318.5, start + 0.18);
+      gain.gain.setValueAtTime(0.28, start);
+      gain.gain.exponentialRampToValueAtTime(0.01, start + 0.34);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(start);
+      osc.stop(start + 0.35);
+    }
+  } catch (err) {
+    console.debug('Emergency SOS siren omitted:', err);
+  }
+};
+
 /**
  * Immediately halts all audio playback, speech synthesis, and active oscillator nodes
  */

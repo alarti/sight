@@ -14,8 +14,8 @@ import {
   loadProfiles, saveProfiles, getDefaultProfile, 
   exportProfilesJSON, importProfilesJSON, hydrateProfilesAudioFromIndexedDB 
 } from './profileManager.ts';
-import { playDwellChime, playKeySnapTick, playKeyTypeChime, playAutocompleteChime } from './utils/audio.ts';
-import { getAiAutocompleteSuggestion } from './utils/predictive.ts';
+import { playDwellChime, playKeySnapTick, playKeyTypeChime, playAutocompleteChime, playEmergencySosSiren } from './utils/audio.ts';
+import { getAiAutocompleteSuggestion, recordLearnedUserPhrase } from './utils/predictive.ts';
 import { useSpeechSynthesizer } from './hooks/useSpeechSynthesizer.ts';
 
 import { HeaderBar } from './components/HeaderBar.tsx';
@@ -29,6 +29,7 @@ import { OnboardingSetupModal } from './components/OnboardingSetupModal.tsx';
 import { ProfileManagementModal } from './components/ProfileManagementModal.tsx';
 import { ScientificPaperModal } from './components/ScientificPaperModal.tsx';
 import { VoiceCloningModal } from './components/VoiceCloningModal.tsx';
+import { ClinicalCommercialModal } from './components/ClinicalCommercialModal.tsx';
 import { OrientationLockOverlay } from './components/OrientationLockOverlay.tsx';
 import { ManualAimingHud } from './components/ManualAimingHud.tsx';
 import { Language, translations } from './i18n/translations.ts';
@@ -60,6 +61,9 @@ export default function App() {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState<boolean>(false);
   const [isPaperModalOpen, setIsPaperModalOpen] = useState<boolean>(false);
   const [isVoiceCloningModalOpen, setIsVoiceCloningModalOpen] = useState<boolean>(false);
+  const [isClinicalModalOpen, setIsClinicalModalOpen] = useState<boolean>(false);
+  const [kioskWakeLockActive, setKioskWakeLockActive] = useState<boolean>(true);
+  const wakeLockSentinelRef = useRef<any>(null);
   const [isManualAimingMode, setIsManualAimingMode] = useState<boolean>(false);
   const isManualAimingModeRef = useRef<boolean>(false);
   isManualAimingModeRef.current = isManualAimingMode;
@@ -119,6 +123,8 @@ export default function App() {
   
   const sessionSuccessCountRef = useRef<number>(0);
   const sessionCancelCountRef = useRef<number>(0);
+  const sessionCharsTypedRef = useRef<number>(0);
+  const sessionPhrasesSpokenRef = useRef<number>(0);
   
   const [typedMessage, setTypedMessage] = useState<string>('');
 
@@ -147,7 +153,10 @@ export default function App() {
   const lastStepTimeRef = useRef<number>(0);
   const [detectedGlanceDirection, setDetectedGlanceDirection] = useState<'LEFT' | 'RIGHT' | 'UP' | 'DOWN' | null>(null);
 
-  const aiSuggestion = useMemo(() => getAiAutocompleteSuggestion(typedMessage, currentLanguage), [typedMessage, currentLanguage]);
+  const aiSuggestion = useMemo(
+    () => getAiAutocompleteSuggestion(typedMessage, currentLanguage, activeProfile.learnedPhraseCounts),
+    [typedMessage, currentLanguage, activeProfile.learnedPhraseCounts]
+  );
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const debugCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -195,8 +204,39 @@ export default function App() {
     isProfileModalOpen,
     isPaperModalOpen,
     isVoiceCloningModalOpen,
+    isClinicalModalOpen,
     isManualAimingMode,
   ]);
+
+  // Wheelchair Kiosk Screen WakeLock management (prevents tablet/laptop sleep while patient communicates)
+  useEffect(() => {
+    let mounted = true;
+    const requestWakeLock = async () => {
+      if (typeof navigator !== 'undefined' && 'wakeLock' in navigator && kioskWakeLockActive) {
+        try {
+          wakeLockSentinelRef.current = await (navigator as any).wakeLock.request('screen');
+        } catch {
+          // WakeLock API may be restricted in non-visible tabs
+        }
+      }
+    };
+    if (kioskWakeLockActive) {
+      void requestWakeLock();
+    } else if (wakeLockSentinelRef.current) {
+      wakeLockSentinelRef.current.release?.().catch(() => {});
+      wakeLockSentinelRef.current = null;
+    }
+    const handleVisibilityChange = () => {
+      if (mounted && document.visibilityState === 'visible' && kioskWakeLockActive) {
+        void requestWakeLock();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      mounted = false;
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [kioskWakeLockActive]);
 
   const handleOnboardingComplete = (name: string, lang: Language = 'es') => {
     const newProf: UserProfile = {
@@ -219,6 +259,7 @@ export default function App() {
       dwellTimeMs: 1200,
       isAdaptiveDwellEnabled: true,
       isStickyKeyboardEnabled: true,
+      kioskWakeLockEnabled: true,
     };
     const updated = [newProf];
     setProfiles(updated);
@@ -310,14 +351,44 @@ export default function App() {
     dwellTimeMsRef.current = dwellTimeMs;
   }, [dwellTimeMs]);
 
+  const recordPhraseAndSpeak = useCallback((phrase: string, onDone?: () => void) => {
+    sessionPhrasesSpokenRef.current++;
+    if (activeProfileRef.current) {
+      const updatedLearned = recordLearnedUserPhrase(activeProfileRef.current.learnedPhraseCounts, phrase);
+      const updatedProf = {
+        ...activeProfileRef.current,
+        learnedPhraseCounts: updatedLearned,
+        updatedAt: Date.now(),
+      };
+      setProfiles(prev => {
+        const list = prev.map(p => p.id === updatedProf.id ? updatedProf : p);
+        saveProfiles(list);
+        return list;
+      });
+    }
+    speakText(phrase, onDone);
+  }, [speakText]);
+
+  const handleTriggerEmergencySos = useCallback(() => {
+    if (activeProfileRef.current?.caregiverConfig?.sirenEnabled !== false) {
+      playEmergencySosSiren();
+    }
+    const sosMsg = currentLanguageRef.current === 'en'
+      ? 'Emergency SOS alert! Caregiver or nurse assistance required immediately.'
+      : '¡Alerta de emergencia SOS! Necesito asistencia inmediata del cuidador o personal clínico.';
+    setTimeout(() => {
+      speakText(sosMsg);
+    }, 650);
+  }, [speakText]);
+
   const handleSpeakTypedMessage = useCallback(() => {
     if (typedMessage.trim()) {
       const messageToSpeak = typedMessage.trim();
-      speakText(messageToSpeak, () => {
+      recordPhraseAndSpeak(messageToSpeak, () => {
         setTypedMessage('');
       });
     }
-  }, [typedMessage, speakText]);
+  }, [typedMessage, recordPhraseAndSpeak]);
 
   const [isBlinkSpeaking, setIsBlinkSpeaking] = useState<boolean>(false);
   const wasBlinkingRef = useRef<boolean>(false);
@@ -328,14 +399,14 @@ export default function App() {
     setIsBlinkSpeaking(true);
     playAutocompleteChime();
     setTypedMessage(aiSuggestion);
-    speakText(aiSuggestion, () => {
+    recordPhraseAndSpeak(aiSuggestion, () => {
       setTypedMessage('');
       setIsBlinkSpeaking(false);
     });
     setTimeout(() => {
       setIsBlinkSpeaking(false);
     }, 1800);
-  }, [aiSuggestion, speakText]);
+  }, [aiSuggestion, recordPhraseAndSpeak]);
 
   const handleApplyAiSuggestionRef = useRef<() => void>(handleApplyAiSuggestion);
   useEffect(() => {
@@ -343,6 +414,7 @@ export default function App() {
   }, [handleApplyAiSuggestion]);
 
   const handleKeyType = useCallback((char: string) => {
+    sessionCharsTypedRef.current++;
     playKeyTypeChime();
     setTypedMessage(prev => prev + char);
   }, []);
@@ -1724,6 +1796,30 @@ export default function App() {
         currentLanguage={currentLanguage}
       />
 
+      {/* CLINICAL COMMERCIAL SaMD SUITE, HL7 FHIR & AES-256 VAULT MODAL */}
+      <ClinicalCommercialModal
+        isOpen={isClinicalModalOpen}
+        onClose={() => setIsClinicalModalOpen(false)}
+        activeProfile={activeProfile}
+        profiles={profiles}
+        onSaveProfile={handleSaveProfile}
+        onRestoreProfiles={(restored) => {
+          setProfiles(restored);
+          if (restored.length > 0) setActiveProfileId(restored[0].id);
+        }}
+        onTriggerEmergencySos={handleTriggerEmergencySos}
+        kioskWakeLockActive={kioskWakeLockActive}
+        onToggleKioskWakeLock={() => setKioskWakeLockActive(prev => !prev)}
+        currentSessionMetrics={{
+          dwellSelectionsCount: sessionSuccessCountRef.current,
+          cancelledDwellsCount: sessionCancelCountRef.current,
+          charactersTyped: sessionCharsTypedRef.current,
+          phrasesVocalized: sessionPhrasesSpokenRef.current,
+          meanSaccadicVelocityPxS: trackingInfo?.eyeVelocity || 0,
+        }}
+        currentLanguage={currentLanguage}
+      />
+
       {/* LIVE MANUAL AIMING & MACHINE LEARNING CALIBRATION HUD */}
       <ManualAimingHud
         isOpen={isManualAimingMode}
@@ -1773,6 +1869,8 @@ export default function App() {
         onOpenProfilesModal={() => setIsProfileModalOpen(true)}
         onOpenPaperModal={() => setIsPaperModalOpen(true)}
         onOpenVoiceCloningModal={() => setIsVoiceCloningModalOpen(true)}
+        onOpenClinicalModal={() => setIsClinicalModalOpen(true)}
+        onTriggerSos={handleTriggerEmergencySos}
         isManualAimingMode={isManualAimingMode}
         onToggleManualAimingMode={() => setIsManualAimingMode(prev => !prev)}
         ocularTheme={ocularTheme}
@@ -1862,7 +1960,7 @@ export default function App() {
         <RecentSpeechBanner
           lastSpokenText={lastSpokenText}
           hoveredDwellId={hoveredDwellId}
-          onRepeatSpeech={() => speakText(lastSpokenText)}
+          onRepeatSpeech={() => recordPhraseAndSpeak(lastSpokenText)}
           currentLanguage={currentLanguage}
         />
 
@@ -1872,7 +1970,14 @@ export default function App() {
             dwellTimeMs={dwellTimeMs}
             hoveredDwellId={hoveredDwellId}
             dwellProgress={dwellProgress}
-            onSelectPreset={(speech) => speakText(speech)}
+            onSelectPreset={(speech, presetId) => {
+              if (presetId === 'nurse' && activeProfile.caregiverConfig?.sirenEnabled !== false) {
+                playEmergencySosSiren();
+                setTimeout(() => recordPhraseAndSpeak(speech), 600);
+              } else {
+                recordPhraseAndSpeak(speech);
+              }
+            }}
             isRestingInSanctuary={isRestingInSanctuary}
             onEnterOcularSleep={handleToggleOcularRestMode}
             currentLanguage={currentLanguage}

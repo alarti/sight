@@ -1,12 +1,13 @@
 {
-  "name": "Pupil Labs Alpha Lab: Asistente Ocular ELA",
-  "short_name": "Pupil ELA",
-  "description": "Sistema de comunicación asistida mediante seguimiento ocular y síntesis de voz para pacientes con ELA.",
+  "name": "SIGHT — Speech, Interaction and Gaze-based Human Technology",
+  "short_name": "SIGHT",
+  "description": "Plataforma clínica de seguimiento ocular neuro-oftálmico y síntesis de voz 100% local para pacientes con ELA y afectación motora severa.",
   "start_url": "./",
   "display": "standalone",
   "orientation": "landscape",
-  "background_color": "#020617",
-  "theme_color": "#020617",
+  "background_color": "#131412",
+  "theme_color": "#131412",
+  "categories": ["medical", "health", "accessibility", "utilities"],
   "icons": [
     {
       "src": "./icon.svg",
