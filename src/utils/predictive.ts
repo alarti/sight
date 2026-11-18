@@ -211,3 +211,81 @@ export function getAiAutocompleteSuggestion(
     ? `${text.trim()}... thank you for being here.`
     : `${text.trim()}... y muchas gracias por estar aquí.`;
 }
+
+const QUICK_WORDS_ES: string[] = [
+  'Hola', 'Quiero', 'Necesito', 'Tengo', 'Por favor', 'Gracias', 'Sí', 'No',
+  'Agua', 'Dolor', 'Cama', 'Silla', 'Postura', 'Frío', 'Calor', 'Descansar',
+  'Baño', 'Manta', 'Almohada', 'Cuello', 'Espalda', 'Piernas', 'Brazos',
+  'Médico', 'Enfermera', 'Familia', 'Teléfono', 'Televisión', 'Luz', 'Ventana',
+  'Comer', 'Beber', 'Dormir', 'Ayuda', 'Ahora', 'Bien', 'incómodo', 'Tranquilo',
+  'Respirar', 'Aspirar', 'Saliva', 'Gafas', 'Salón', 'Habitación', 'Pastilla'
+];
+
+const QUICK_WORDS_EN: string[] = [
+  'Hello', 'I want', 'I need', 'Please', 'Thank you', 'Yes', 'No',
+  'Water', 'Pain', 'Bed', 'Chair', 'Posture', 'Cold', 'Hot', 'Rest',
+  'Bathroom', 'Blanket', 'Pillow', 'Neck', 'Back', 'Legs', 'Arms',
+  'Doctor', 'Nurse', 'Family', 'Phone', 'Television', 'Light', 'Window',
+  'Eat', 'Drink', 'Sleep', 'Help', 'Now', 'Good', 'Uncomfortable', 'Calm',
+  'Breathe', 'Suction', 'Glasses', 'Room', 'Medicine'
+];
+
+/**
+ * Computes top-K single-word or short-token completions based on the active trailing
+ * character prefix in `text`, enabling 1-dwell word completion on the direct-gaze keyboard.
+ */
+export function getQuickWordSuggestions(
+  text: string,
+  language: Language = 'es',
+  limit: number = 5
+): string[] {
+  const lexicon = language === 'en' ? QUICK_WORDS_EN : QUICK_WORDS_ES;
+  const endsWithSpace = /\s$/.test(text);
+  const trimmed = text.trim();
+
+  if (!trimmed || endsWithSpace) {
+    return lexicon.slice(0, limit);
+  }
+
+  const tokens = trimmed.split(/\s+/);
+  const activePrefix = (tokens[tokens.length - 1] || '').toLowerCase();
+  if (!activePrefix) {
+    return lexicon.slice(0, limit);
+  }
+
+  const prefixMatches = lexicon.filter(
+    w => w.toLowerCase().startsWith(activePrefix) && w.toLowerCase() !== activePrefix
+  );
+  const substringMatches = lexicon.filter(
+    w => !w.toLowerCase().startsWith(activePrefix) && w.toLowerCase().includes(activePrefix)
+  );
+
+  const combined = [...prefixMatches, ...substringMatches];
+  if (combined.length >= limit) {
+    return combined.slice(0, limit);
+  }
+
+  for (const fallback of lexicon) {
+    if (!combined.includes(fallback)) {
+      combined.push(fallback);
+    }
+    if (combined.length >= limit) break;
+  }
+
+  return combined.slice(0, limit);
+}
+
+/**
+ * Replaces the active trailing word prefix in `currentText` with the chosen `word`
+ * and appends a trailing space for seamless continuous typing.
+ */
+export function applyWordCompletion(currentText: string, word: string): string {
+  if (!currentText.trim() || /\s$/.test(currentText)) {
+    const base = currentText.trimEnd();
+    return base ? `${base} ${word} ` : `${word} `;
+  }
+  const tokens = currentText.trimEnd().split(/\s+/);
+  tokens[tokens.length - 1] = word;
+  return `${tokens.join(' ')} `;
+}
+

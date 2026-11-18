@@ -7,6 +7,7 @@ import { describe, it, expect } from 'vitest';
 import {
   isSafeAudioUrl,
   sanitizeUserProfile,
+  getDefaultProfile,
   encryptProfilesPayloadAES,
   decryptProfilesPayloadAES,
   DEFAULT_VOICE_PROFILE,
@@ -15,6 +16,8 @@ import {
   getCircadianGreetingPhrases,
   recordLearnedUserPhrase,
   getAiAutocompleteSuggestion,
+  getQuickWordSuggestions,
+  applyWordCompletion,
 } from './predictive.ts';
 
 describe('Security, Privacy & Commercial SaMD Suite Verification', () => {
@@ -97,4 +100,15 @@ describe('Security, Privacy & Commercial SaMD Suite Verification', () => {
     const suggestion = getAiAutocompleteSuggestion('nece', 'es', learned);
     expect(suggestion).toBe('Necesito aspiración de secreciones por favor.');
   });
+
+  it('disables sticky keyboard stepper and provides 1-dwell word completions on the virtual keyboard', () => {
+    expect(getDefaultProfile().isStickyKeyboardEnabled).toBe(false);
+    const migrated = sanitizeUserProfile({ id: 'p1', name: 'Test', isStickyKeyboardEnabled: true });
+    expect(migrated?.isStickyKeyboardEnabled).toBe(false);
+
+    const wordsEs = getQuickWordSuggestions('Quiero ag', 'es', 5);
+    expect(wordsEs[0]).toBe('Agua');
+    expect(applyWordCompletion('Quiero ag', 'Agua')).toBe('Quiero Agua ');
+  });
 });
+

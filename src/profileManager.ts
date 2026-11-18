@@ -291,7 +291,7 @@ export function sanitizeUserProfile(raw: unknown): UserProfile | null {
     invertY: typeof obj.invertY === 'boolean' ? obj.invertY : false,
     dwellTimeMs: clampFinite(obj.dwellTimeMs, 350, 4000, 1200),
     isAdaptiveDwellEnabled: typeof obj.isAdaptiveDwellEnabled === 'boolean' ? obj.isAdaptiveDwellEnabled : true,
-    isStickyKeyboardEnabled: typeof obj.isStickyKeyboardEnabled === 'boolean' ? obj.isStickyKeyboardEnabled : true,
+    isStickyKeyboardEnabled: false,
     neutralCenter: obj.neutralCenter && typeof obj.neutralCenter === 'object'
       ? {
           x: clampFinite((obj.neutralCenter as any).x, 0.05, 0.95, 0.5),
@@ -428,7 +428,7 @@ export function getDefaultProfile(): UserProfile {
     invertY: false,
     dwellTimeMs: 1200,
     isAdaptiveDwellEnabled: true,
-    isStickyKeyboardEnabled: true,
+    isStickyKeyboardEnabled: false,
     neutralCenter: { x: 0.5, y: 0.5 },
     voiceProfile: { ...DEFAULT_VOICE_PROFILE },
     kioskWakeLockEnabled: true,
@@ -454,7 +454,7 @@ export function createNewProfile(name: string, language: 'es' | 'en' = 'es'): Us
     invertY: false,
     dwellTimeMs: 1200,
     isAdaptiveDwellEnabled: true,
-    isStickyKeyboardEnabled: true,
+    isStickyKeyboardEnabled: false,
     neutralCenter: { x: 0.5, y: 0.5 },
     voiceProfile: {
       ...DEFAULT_VOICE_PROFILE,

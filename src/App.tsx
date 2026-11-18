@@ -33,24 +33,6 @@ import { ClinicalCommercialModal } from './components/ClinicalCommercialModal.ts
 import { ManualAimingHud } from './components/ManualAimingHud.tsx';
 import { Language, translations } from './i18n/translations.ts';
 
-/**
- * 2D discrete keyboard topological matrix for quantized directional eye-glance stepping
- * (Paper Section 6.1: Hysteretic Quantized Gaze Stepper).
- * Maps row/column coordinates (r, c) to target key IDs for low-amplitude ocular navigation.
- */
-const getGridMap = (lang: Language = 'es'): string[][] => [
-  // Row 0: AI Autocomplete Predictive Card
-  ['ai-autocomplete-card'],
-  // Row 1: Primary Speech & Editing Action Keys
-  ['key-speak', 'key-space', 'key-backspace'],
-  // Row 2: Top QWERTY Row
-  ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
-  // Row 3: Home ASDF Row
-  ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', lang === 'en' ? ';' : 'Ñ'],
-  // Row 4: Bottom ZXCV Row
-  ['Z', 'X', 'C', 'V', 'B', 'N', 'M', ',', '.', '?']
-];
-
 export default function App() {
   const [activeTab, setActiveTab] = useState<'eye-comm' | 'virtual-keyboard'>('eye-comm');
   
@@ -131,30 +113,11 @@ export default function App() {
   
   const [typedMessage, setTypedMessage] = useState<string>('');
 
-  // Mario's Sticky Cursor & Directional Eye Stepper
   const activeTabRef = useRef(activeTab);
   activeTabRef.current = activeTab;
 
-  const [isStickyKeyboardEnabled, setIsStickyKeyboardEnabled] = useState<boolean>(activeProfile.isStickyKeyboardEnabled ?? true);
-  const isStickyKeyboardEnabledRef = useRef<boolean>(isStickyKeyboardEnabled);
-  isStickyKeyboardEnabledRef.current = isStickyKeyboardEnabled;
-
-  const [stickyFocusedKey, setStickyFocusedKey] = useState<string>('Q');
-  const stickyFocusedKeyRef = useRef<string>('Q');
   const keyboardContainerRef = useRef<HTMLDivElement>(null);
-
-  // Grid coordinates for directional navigation
-  const [gridRow, setGridRow] = useState<number>(2); // Start at row 2 ('Q')
-  const [gridCol, setGridCol] = useState<number>(0);
-  const gridRowRef = useRef<number>(2);
-  gridRowRef.current = gridRow;
-  const gridColRef = useRef<number>(0);
-  gridColRef.current = gridCol;
-
   const neutralCenterRef = useRef<{ x: number; y: number }>({ x: 0.5, y: 0.5 });
-  const lastGlanceDirRef = useRef<'LEFT' | 'RIGHT' | 'UP' | 'DOWN' | null>(null);
-  const lastStepTimeRef = useRef<number>(0);
-  const [detectedGlanceDirection, setDetectedGlanceDirection] = useState<'LEFT' | 'RIGHT' | 'UP' | 'DOWN' | null>(null);
 
   const aiSuggestion = useMemo(
     () => getAiAutocompleteSuggestion(typedMessage, currentLanguage, activeProfile.learnedPhraseCounts),
@@ -200,6 +163,7 @@ export default function App() {
     invalidateDwellTargetsCache();
   }, [
     activeTab,
+    typedMessage,
     isOcularRestMode,
     isAdvancedPanelOpen,
     isGridWizardOpen,
@@ -261,7 +225,7 @@ export default function App() {
       invertY: false,
       dwellTimeMs: 1200,
       isAdaptiveDwellEnabled: true,
-      isStickyKeyboardEnabled: true,
+      isStickyKeyboardEnabled: false,
       kioskWakeLockEnabled: true,
     };
     const updated = [newProf];
@@ -294,7 +258,6 @@ export default function App() {
       setOcularTheme(loaded[0].ocularTheme || 'warm-obsidian');
       setDwellTimeMs(loaded[0].dwellTimeMs || 1200);
       setIsAdaptiveDwellEnabled(loaded[0].isAdaptiveDwellEnabled ?? true);
-      setIsStickyKeyboardEnabled(loaded[0].isStickyKeyboardEnabled ?? true);
 
       void hydrateProfilesAudioFromIndexedDB(loaded).then((hydrated) => {
         if (hydrated !== loaded) {
@@ -322,9 +285,6 @@ export default function App() {
       }
       if (typeof activeProfile.isAdaptiveDwellEnabled === 'boolean') {
         setIsAdaptiveDwellEnabled(activeProfile.isAdaptiveDwellEnabled);
-      }
-      if (typeof activeProfile.isStickyKeyboardEnabled === 'boolean') {
-        setIsStickyKeyboardEnabled(activeProfile.isStickyKeyboardEnabled);
       }
       if (activeProfile.neutralCenter) {
         neutralCenterRef.current = { ...activeProfile.neutralCenter };
@@ -423,53 +383,6 @@ export default function App() {
     sessionCharsTypedRef.current++;
     playKeyTypeChime();
     setTypedMessage(prev => prev + char);
-  }, []);
-
-  // [Paper Section 6.1: Quantized Gaze Glance Engine]
-  const stepSelector = useCallback((dir: 'LEFT' | 'RIGHT' | 'UP' | 'DOWN') => {
-    const gridMap = getGridMap(currentLanguageRef.current);
-    let r = gridRowRef.current;
-    let c = gridColRef.current;
-
-    if (dir === 'LEFT') {
-      c = Math.max(0, c - 1);
-    } else if (dir === 'RIGHT') {
-      const maxCol = gridMap[r].length - 1;
-      c = Math.min(maxCol, c + 1);
-    } else if (dir === 'UP') {
-      if (r > 0) {
-        const prevRowLen = gridMap[r].length;
-        const targetRowLen = gridMap[r - 1].length;
-        const ratio = c / Math.max(1, prevRowLen - 1);
-        c = Math.min(targetRowLen - 1, Math.round(ratio * (targetRowLen - 1)));
-        r = r - 1;
-      }
-    } else if (dir === 'DOWN') {
-      if (r < gridMap.length - 1) {
-        const prevRowLen = gridMap[r].length;
-        const targetRowLen = gridMap[r + 1].length;
-        const ratio = c / Math.max(1, prevRowLen - 1);
-        c = Math.min(targetRowLen - 1, Math.round(ratio * (targetRowLen - 1)));
-        r = r + 1;
-      }
-    }
-
-    gridRowRef.current = r;
-    gridColRef.current = c;
-    setGridRow(r);
-    setGridCol(c);
-
-    const targetKey = gridMap[r][c];
-    const targetDwellId = r >= 2 ? `char-${targetKey}` : targetKey;
-    setStickyFocusedKey(targetKey);
-    stickyFocusedKeyRef.current = targetKey;
-    setHoveredDwellId(targetDwellId);
-
-    playKeySnapTick();
-
-    dwellStartTimeRef.current = performance.now();
-    dwellTargetRef.current = targetDwellId;
-    setDwellProgress(0);
   }, []);
 
   const handleToggleLanguage = useCallback((targetLang?: Language) => {
@@ -578,24 +491,6 @@ export default function App() {
     }
   }, [handleSaveProfile]);
 
-  const executeCurrentStickyKey = useCallback(() => {
-    const gridMap = getGridMap(currentLanguageRef.current);
-    const currentKey = stickyFocusedKeyRef.current || gridMap[gridRowRef.current]?.[gridColRef.current];
-    if (!currentKey) return;
-
-    if (currentKey === 'ai-autocomplete-card') {
-      handleApplyAiSuggestion();
-    } else if (currentKey === 'key-speak') {
-      handleSpeakTypedMessage();
-    } else if (currentKey === 'key-space') {
-      handleKeyType(' ');
-    } else if (currentKey === 'key-backspace') {
-      setTypedMessage(prev => prev.slice(0, -1));
-    } else {
-      handleKeyType(currentKey);
-    }
-  }, [handleApplyAiSuggestion, handleSpeakTypedMessage, handleKeyType]);
-
   const liveCursorPosRef = useRef<{ x: number; y: number }>({
     x: typeof window !== 'undefined' ? window.innerWidth / 2 : 500,
     y: typeof window !== 'undefined' ? window.innerHeight / 2 : 400,
@@ -605,7 +500,7 @@ export default function App() {
     if (cursorRef.current) {
       cursorRef.current.style.transform = `translate3d(${liveCursorPosRef.current.x - 32}px, ${liveCursorPosRef.current.y - 32}px, 0)`;
     }
-  }, [isManualAimingMode, activeTab, isStickyKeyboardEnabled]);
+  }, [isManualAimingMode, activeTab]);
 
   const commitManualAimingToMl = useCallback((desiredScreenX: number, desiredScreenY: number) => {
     const screenW = typeof window !== 'undefined' ? window.innerWidth : 1280;
@@ -871,17 +766,10 @@ export default function App() {
           return;
         }
       }
-
-      if (activeTabRef.current !== 'virtual-keyboard' || !isStickyKeyboardEnabledRef.current) return;
-      if (e.key === 'ArrowLeft') { e.preventDefault(); stepSelector('LEFT'); }
-      if (e.key === 'ArrowRight') { e.preventDefault(); stepSelector('RIGHT'); }
-      if (e.key === 'ArrowUp') { e.preventDefault(); stepSelector('UP'); }
-      if (e.key === 'ArrowDown') { e.preventDefault(); stepSelector('DOWN'); }
-      if (e.key === 'Enter') { e.preventDefault(); executeCurrentStickyKey(); }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [stepSelector, executeCurrentStickyKey, handleNudgeCursor, commitManualAimingToMl]);
+  }, [handleNudgeCursor, commitManualAimingToMl]);
 
   const startCamera = async () => {
     setCameraError(null);
@@ -991,20 +879,6 @@ export default function App() {
         handleSaveProfile({
           ...activeProfileRef.current,
           isAdaptiveDwellEnabled: next,
-          updatedAt: Date.now(),
-        });
-      }
-      return next;
-    });
-  }, [handleSaveProfile]);
-
-  const handleStickyKeyboardChange = useCallback((val: boolean | ((prev: boolean) => boolean)) => {
-    setIsStickyKeyboardEnabled(prev => {
-      const next = typeof val === 'function' ? val(prev) : val;
-      if (activeProfileRef.current) {
-        handleSaveProfile({
-          ...activeProfileRef.current,
-          isStickyKeyboardEnabled: next,
           updatedAt: Date.now(),
         });
       }
@@ -1393,51 +1267,47 @@ export default function App() {
     }
   }, [trainAlgorithmOnSuccess, isAdaptiveDwellEnabled]);
 
-  // Intentional Squint / Sustained Eyelid Narrowing Trigger
+  // Intentional Squint / Sustained Eyelid Narrowing Trigger (activates currently gazed key or button)
   useEffect(() => {
     if (trackingInfo?.isSquinting && !isManualAimingModeRef.current && !isOcularRestModeRef.current) {
       const now = performance.now();
-      if (activeTabRef.current === 'virtual-keyboard') {
-        if (now - lastBlinkSpeakTimeRef.current > 1800) {
-          lastBlinkSpeakTimeRef.current = now;
-          dwellCooldownUntilRef.current = now + 1100;
-          dwellStartTimeRef.current = now + 1100;
-          setDwellProgress(0);
-          handleApplyAiSuggestionRef.current();
+      const el = document.elementFromPoint(liveCursorPosRef.current.x, liveCursorPosRef.current.y);
+      const targetElement = el?.closest('[data-dwell-id]') as HTMLElement | null;
+      if (targetElement) {
+        playKeyTypeChime();
+        trainAlgorithmOnSuccess(targetElement);
+        if (cursorRingRef.current) {
+          cursorRingRef.current.style.strokeDashoffset = '0';
+          setTimeout(() => {
+            if (cursorRingRef.current) cursorRingRef.current.style.strokeDashoffset = '175.9';
+          }, 200);
         }
-      } else {
-        const el = document.elementFromPoint(liveCursorPosRef.current.x, liveCursorPosRef.current.y);
-        const targetElement = el?.closest('[data-dwell-id]') as HTMLElement | null;
-        if (targetElement) {
-          playKeyTypeChime();
-          trainAlgorithmOnSuccess(targetElement);
-          if (cursorRingRef.current) {
-            cursorRingRef.current.style.strokeDashoffset = '0';
-            setTimeout(() => {
-              if (cursorRingRef.current) cursorRingRef.current.style.strokeDashoffset = '175.9';
-            }, 200);
-          }
-          dwellCooldownUntilRef.current = now + 850;
-          dwellStartTimeRef.current = null;
-          dwellTargetRef.current = null;
-          lastReportedProgRef.current = 0;
-          setHoveredDwellId(null);
-          setDwellProgress(0);
-          setTimeout(() => targetElement.click(), 10);
-        }
+        dwellCooldownUntilRef.current = now + 850;
+        dwellStartTimeRef.current = null;
+        dwellTargetRef.current = null;
+        lastReportedProgRef.current = 0;
+        setHoveredDwellId(null);
+        setDwellProgress(0);
+        setTimeout(() => targetElement.click(), 10);
+      } else if (activeTabRef.current === 'virtual-keyboard' && now - lastBlinkSpeakTimeRef.current > 1800) {
+        lastBlinkSpeakTimeRef.current = now;
+        dwellCooldownUntilRef.current = now + 1100;
+        dwellStartTimeRef.current = now + 1100;
+        setDwellProgress(0);
+        handleApplyAiSuggestionRef.current();
       }
     }
   }, [trackingInfo?.isSquinting, trainAlgorithmOnSuccess]);
 
   /**
-   * 60 FPS Real-Time Ocular Tracking & Hysteretic Directional Stepper Loop:
+   * 60 FPS Real-Time Ocular Tracking & Continuous Direct-Gaze Dwell Loop:
    *   - Acquires smoothed/fused binocular gaze telemetry from `BrowserAIEyeTracker.processFrame()`.
    *   - Implements a 750 ms blink-freeze grace window so natural involuntary blinks pause
    *     the dwell timer in-place rather than resetting selection progress.
    *   - Detects intentional sustained blinks (>= 420 ms) on the virtual keyboard to trigger
    *     immediate AI phrase completion.
-   *   - Routes valid gaze telemetry to either the Quantized Directional Stepper (Section 6.1)
-   *     or the Continuous Gaze & Dwell Engine (Bayesian Lock / Ocular Trackball / Two-Stage Loupe).
+   *   - Routes valid gaze telemetry across all tabs (both ALS Quick Board and Virtual Keyboard)
+   *     directly to the Continuous Gaze & Dwell Engine (`updateGazeAndDwell`).
    */
   useEffect(() => {
     if (!cameraActive || trackingMode !== 'webcam') return;
@@ -1519,123 +1389,54 @@ export default function App() {
             setIsTrackingPaused(false);
           }
 
-          // 1. STICKY KEYBOARD MODE: DISCRETE DIRECTIONAL EYE GESTURES (disabled during Ocular Rest Curtain or Manual Aiming)
-          if (
-            activeTabRef.current === 'virtual-keyboard' &&
-            isStickyKeyboardEnabledRef.current &&
-            !isManualAimingModeRef.current &&
-            !isOcularRestModeRef.current
-          ) {
-            const dx = data.rawGazeX - neutralCenterRef.current.x;
-            const dy = data.rawGazeY - neutralCenterRef.current.y;
-
-            const threshX = Math.max(0.018, 0.14 / (sensitivityX / 10));
-            const threshY = Math.max(0.018, 0.14 / (sensitivityY / 10));
-
-            let glanceDir: 'LEFT' | 'RIGHT' | 'UP' | 'DOWN' | null = null;
-            const ratioX = Math.abs(dx) / threshX;
-            const ratioY = Math.abs(dy) / threshY;
-
-            if (ratioX >= 1.0 || ratioY >= 1.0) {
-              if (ratioX >= ratioY) {
-                glanceDir = dx < 0 ? 'LEFT' : 'RIGHT';
-              } else {
-                glanceDir = dy < 0 ? 'UP' : 'DOWN';
-              }
-            }
-
-            if (glanceDir) {
-              setDetectedGlanceDirection(glanceDir);
-              const isSameDir = glanceDir === lastGlanceDirRef.current;
-              const elapsedSinceStep = now - lastStepTimeRef.current;
-
-              if (!isSameDir) {
-                lastGlanceDirRef.current = glanceDir;
-                lastStepTimeRef.current = now;
-                stepSelector(glanceDir);
-              } else if (elapsedSinceStep > 460) {
-                lastStepTimeRef.current = now - 140;
-                stepSelector(glanceDir);
+          // CONTINUOUS CALIBRATED GAZE RETICLE MODE (Active across all communication and keyboard tabs)
+          if (!isDraggingReticleRef.current) {
+            if (isManualAimingModeRef.current) {
+              liveCursorPosRef.current = { x: data.gazeScreenX, y: data.gazeScreenY };
+              if (cursorRef.current) {
+                cursorRef.current.style.transform = `translate3d(${data.gazeScreenX - 32}px, ${data.gazeScreenY - 32}px, 0)`;
               }
             } else {
-              if (ratioX < 0.6 && ratioY < 0.6) {
-                lastGlanceDirRef.current = null;
-                setDetectedGlanceDirection(null);
+              const screenW = typeof window !== 'undefined' ? window.innerWidth : 1280;
+              const screenH = typeof window !== 'undefined' ? window.innerHeight : 720;
+              let posX = data.gazeScreenX;
+              let posY = data.gazeScreenY;
 
-                if (data.isFixating) {
-                  neutralCenterRef.current.x += dx * 0.015;
-                  neutralCenterRef.current.y += dy * 0.015;
+              if (cursorControlModeRef.current === 'ocular-trackball') {
+                const curPos = trackballControllerRef.current.getPosition();
+                const curHoverEl = document.elementFromPoint(curPos.x, curPos.y)?.closest('[data-dwell-id]');
+                const tb = trackballControllerRef.current.update({
+                  rawGazeX: data.rawGazeX,
+                  rawGazeY: data.rawGazeY,
+                  neutralX: neutralCenterRef.current.x,
+                  neutralY: neutralCenterRef.current.y,
+                  sensitivityX,
+                  sensitivityY,
+                  dtSec: frameDt / 1000,
+                  screenW,
+                  screenH,
+                  isOverTarget: Boolean(curHoverEl),
+                });
+                posX = tb.x;
+                posY = tb.y;
+              } else if (cursorControlModeRef.current === 'two-stage-loupe') {
+                const lp = loupeControllerRef.current.update(
+                  data.gazeScreenX,
+                  data.gazeScreenY,
+                  now,
+                  screenW,
+                  screenH,
+                  isRestingInSanctuaryRef.current
+                );
+                posX = lp.x;
+                posY = lp.y;
+                if (lp.stage !== lastReportedLoupeStageRef.current) {
+                  lastReportedLoupeStageRef.current = lp.stage;
+                  setLoupeState(lp.stage === 'fine-loupe' ? lp : null);
                 }
               }
-            }
 
-            if (now >= dwellCooldownUntilRef.current) {
-              if (dwellStartTimeRef.current) {
-                const elapsed = now - dwellStartTimeRef.current;
-                const progress = Math.min(100, Math.max(0, (elapsed / dwellTimeMsRef.current) * 100));
-                setDwellProgress(Math.floor(progress / 5) * 5);
-
-                if (progress >= 100) {
-                  playDwellChime();
-                  dwellCooldownUntilRef.current = now + 900;
-                  dwellStartTimeRef.current = performance.now() + 900;
-                  setDwellProgress(0);
-                  executeCurrentStickyKey();
-                }
-              } else {
-                dwellStartTimeRef.current = now;
-              }
-            }
-          } else {
-            // 2. CONTINUOUS GAZE RETICLE MODE (Bayesian Lock / Ocular Trackball / Two-Stage Loupe / Direct Matrix)
-            if (!isDraggingReticleRef.current) {
-              if (isManualAimingModeRef.current) {
-                liveCursorPosRef.current = { x: data.gazeScreenX, y: data.gazeScreenY };
-                if (cursorRef.current) {
-                  cursorRef.current.style.transform = `translate3d(${data.gazeScreenX - 32}px, ${data.gazeScreenY - 32}px, 0)`;
-                }
-              } else {
-                const screenW = typeof window !== 'undefined' ? window.innerWidth : 1280;
-                const screenH = typeof window !== 'undefined' ? window.innerHeight : 720;
-                let posX = data.gazeScreenX;
-                let posY = data.gazeScreenY;
-
-                if (cursorControlModeRef.current === 'ocular-trackball') {
-                  const curPos = trackballControllerRef.current.getPosition();
-                  const curHoverEl = document.elementFromPoint(curPos.x, curPos.y)?.closest('[data-dwell-id]');
-                  const tb = trackballControllerRef.current.update({
-                    rawGazeX: data.rawGazeX,
-                    rawGazeY: data.rawGazeY,
-                    neutralX: neutralCenterRef.current.x,
-                    neutralY: neutralCenterRef.current.y,
-                    sensitivityX,
-                    sensitivityY,
-                    dtSec: frameDt / 1000,
-                    screenW,
-                    screenH,
-                    isOverTarget: Boolean(curHoverEl),
-                  });
-                  posX = tb.x;
-                  posY = tb.y;
-                } else if (cursorControlModeRef.current === 'two-stage-loupe') {
-                  const lp = loupeControllerRef.current.update(
-                    data.gazeScreenX,
-                    data.gazeScreenY,
-                    now,
-                    screenW,
-                    screenH,
-                    isRestingInSanctuaryRef.current
-                  );
-                  posX = lp.x;
-                  posY = lp.y;
-                  if (lp.stage !== lastReportedLoupeStageRef.current) {
-                    lastReportedLoupeStageRef.current = lp.stage;
-                    setLoupeState(lp.stage === 'fine-loupe' ? lp : null);
-                  }
-                }
-
-                updateGazeAndDwell(posX, posY, now, data.eyeVelocity, data.signalQuality ?? 0.85);
-              }
+              updateGazeAndDwell(posX, posY, now, data.eyeVelocity, data.signalQuality ?? 0.85);
             }
           }
 
@@ -1660,7 +1461,7 @@ export default function App() {
     return () => {
       if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
     };
-  }, [cameraActive, trackingMode, sensitivityX, sensitivityY, stepSelector, executeCurrentStickyKey, updateGazeAndDwell]);
+  }, [cameraActive, trackingMode, sensitivityX, sensitivityY, updateGazeAndDwell]);
 
   // Mouse / Pointer emulation fallback when webcam is inactive
   useEffect(() => {
@@ -1673,9 +1474,7 @@ export default function App() {
       if (isDraggingReticleRef.current || isManualAimingModeRef.current) return;
       const now = performance.now();
       liveCursorPosRef.current = { x: e.clientX, y: e.clientY };
-      if (isOcularRestModeRef.current || activeTabRef.current !== 'virtual-keyboard' || !isStickyKeyboardEnabledRef.current) {
-        updateGazeAndDwell(e.clientX, e.clientY, now);
-      }
+      updateGazeAndDwell(e.clientX, e.clientY, now);
       if (now - lastStateFlushRef.current > 80) {
         lastStateFlushRef.current = now;
         setGazeX(e.clientX);
@@ -1865,11 +1664,11 @@ export default function App() {
         currentLanguage={currentLanguage}
       />
 
-      {/* SMOOTH FLOATING GAZE RETICLE */}
+      {/* SMOOTH FLOATING GAZE RETICLE (ALWAYS ACTIVE FOR DIRECT OCULAR POINTING) */}
       <GazeReticle 
         ref={cursorRef} 
         ringRef={cursorRingRef} 
-        visible={isOcularRestMode || isManualAimingMode || !(activeTab === 'virtual-keyboard' && isStickyKeyboardEnabled)}
+        visible={true}
         isManualAimingMode={isManualAimingMode}
         isDraggingReticle={isDraggingReticle}
         isTrackingPaused={cameraActive && trackingMode === 'webcam' && isTrackingPaused}
@@ -2025,7 +1824,7 @@ export default function App() {
           />
         )}
 
-        {/* TAB 2: VIRTUAL KEYBOARD WITH DIRECTIONAL GESTURE SELECTOR & OCULAR PAUSE PAD */}
+        {/* TAB 2: DIRECT-GAZE VIRTUAL KEYBOARD WITH 1-DWELL WORD COMPLETION & OCULAR PAUSE PAD */}
         {activeTab === 'virtual-keyboard' && (
           <VirtualKeyboard
             typedMessage={typedMessage}
@@ -2034,15 +1833,10 @@ export default function App() {
             dwellTimeMs={dwellTimeMs}
             dwellProgress={dwellProgress}
             hoveredDwellId={hoveredDwellId}
-            stickyFocusedKey={stickyFocusedKey}
-            isStickyKeyboardEnabled={isStickyKeyboardEnabled}
-            setIsStickyKeyboardEnabled={handleStickyKeyboardChange}
             keyboardContainerRef={keyboardContainerRef}
             onSpeakTypedMessage={handleSpeakTypedMessage}
             onApplyAiSuggestion={handleApplyAiSuggestion}
             onKeyType={handleKeyType}
-            detectedGlanceDirection={detectedGlanceDirection}
-            onManualDirectionalStep={stepSelector}
             isRestingInSanctuary={isRestingInSanctuary}
             isBlinkSpeaking={isBlinkSpeaking}
             currentLanguage={currentLanguage}
