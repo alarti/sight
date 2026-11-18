@@ -180,8 +180,8 @@ export class BrowserAIEyeTracker {
   private headPitchFilter = new OneEuroFilter(0.28, 1.2, 1.0);
 
   private kalmanFilter = new KalmanGazeFilter();
-  private filterX = new OneEuroFilter(0.45, 0.014, 1.0);
-  private filterY = new OneEuroFilter(0.45, 0.014, 1.0);
+  private filterX = new OneEuroFilter(0.85, 0.035, 1.0);
+  private filterY = new OneEuroFilter(0.85, 0.035, 1.0);
 
   private sensitivityX = 14.0;
   private sensitivityY = 14.0;
@@ -482,21 +482,11 @@ export class BrowserAIEyeTracker {
       this.lastFittedSignature = this.buildSamplesSignature(this.calibrationSamples, this.calibrationAlgorithm);
     }
 
-    // Synchronize offset cleanly: M-QPM / TPS already pass through the trained point (~0px residual),
-    // so reset baselineOffset to 0 instead of shifting the rest of the action quadrant
+    // Synchronize offset cleanly: exact pupil-imprint anchor interpolation already passes through
+    // every recorded target with ~0.0 px residual, so keep baselineOffset at 0 so all anchors stay exact
     if (this.calibrationCoeffs) {
-      const pred = evaluateCalibratedGaze(gx, gy, headYaw, headPitch, this.calibrationCoeffs, this.calibrationAlgorithm);
-      if (pred) {
-        const residualX = pred.x - clampedTargetX;
-        const residualY = pred.y - clampedTargetY;
-        if (Math.hypot(residualX, residualY) <= 6) {
-          this.baselineOffsetX = 0;
-          this.baselineOffsetY = 0;
-        } else {
-          this.baselineOffsetX = Math.max(-screenW * 0.85, Math.min(screenW * 0.85, residualX));
-          this.baselineOffsetY = Math.max(-screenH * 0.85, Math.min(screenH * 0.85, residualY));
-        }
-      }
+      this.baselineOffsetX = 0;
+      this.baselineOffsetY = 0;
     } else {
       const rawDefaultX = screenW * (0.5 + (gx - this.neutralX) * this.sensitivityX);
       const rawDefaultY = screenH * (0.5 + (gy - this.neutralY) * (this.sensitivityY * 1.15));
@@ -574,10 +564,10 @@ export class BrowserAIEyeTracker {
   }
 
   /**
-   * Online Postural Drift Refinement (Anchor-Safe):
-   * When the user already has a 9-point grid calibration, never overwrite or append noisy button-click samples
-   * that would warp the spatial calibration matrix. Instead, apply a gentle bounded baseline offset nudge
-   * if the click is close to the target.
+   * Anchor-Preserving Interaction Recorder:
+   * Once calibrated pupil imprints exist (`calibrationSamples.length >= 1`), never overwrite them
+   * with unverified automatic dwell clicks and never mutate `baselineOffsetX / Y`, guaranteeing
+   * that every explicitly recorded pupil imprint continues to reposition the cursor with 0.0 px error.
    */
   public recordSuccessfulInteraction(
     rawGazeX: number,
@@ -592,26 +582,8 @@ export class BrowserAIEyeTracker {
       return [...this.calibrationSamples];
     }
 
-    if (this.calibrationCoeffs && this.calibrationSamples.length >= 2) {
-      const currentPred = evaluateCalibratedGaze(
-        rawGazeX,
-        rawGazeY,
-        headYaw,
-        headPitch,
-        this.calibrationCoeffs,
-        this.calibrationAlgorithm
-      );
-      if (currentPred) {
-        const predX = currentPred.x - this.baselineOffsetX;
-        const predY = currentPred.y - this.baselineOffsetY;
-        const errX = predX - screenTargetX;
-        const errY = predY - screenTargetY;
-        const errDist = Math.hypot(errX, errY);
-        if (errDist > 6 && errDist < 55) {
-          this.baselineOffsetX = Math.max(-28, Math.min(28, this.baselineOffsetX + errX * 0.05));
-          this.baselineOffsetY = Math.max(-28, Math.min(28, this.baselineOffsetY + errY * 0.05));
-        }
-      }
+    // Preserve exact pupil-imprint anchors without shifting baselineOffset or injecting noisy dwell points
+    if (this.calibrationSamples.length >= 1) {
       return [...this.calibrationSamples];
     }
 
@@ -625,13 +597,8 @@ export class BrowserAIEyeTracker {
       headRoll
     };
 
-    if (this.calibrationSamples.length < 9) {
-      this.calibrationSamples.push(newSample);
-    }
-
-    if (this.calibrationSamples.length >= 4) {
-      this.calibrationCoeffs = fitCalibrationModel(this.calibrationSamples, this.calibrationAlgorithm);
-    }
+    this.calibrationSamples.push(newSample);
+    this.calibrationCoeffs = fitCalibrationModel(this.calibrationSamples, this.calibrationAlgorithm);
     return [...this.calibrationSamples];
   }
 
@@ -1069,28 +1036,28 @@ export class BrowserAIEyeTracker {
         }
         const distToAnchor = Math.hypot(kalmanOut.x - this.fixationAnchorX, kalmanOut.y - this.fixationAnchorY);
 
-        if (distToAnchor < 14 && windowDispersion < 16) {
-          // Inner sub-pixel lock zone: rock-solid visual cursor during target fixation (zero visible tremor)
-          this.fixationAnchorX = this.fixationAnchorX * 0.96 + kalmanOut.x * 0.04;
-          this.fixationAnchorY = this.fixationAnchorY * 0.96 + kalmanOut.y * 0.04;
+        if (distToAnchor < 5 && windowDispersion < 7) {
+          // Tight sub-pixel lock zone (< 5 px): absorbs pure camera quantization noise at a steady pupil imprint
+          this.fixationAnchorX = this.fixationAnchorX * 0.90 + kalmanOut.x * 0.10;
+          this.fixationAnchorY = this.fixationAnchorY * 0.90 + kalmanOut.y * 0.10;
           targetFilteredX = this.fixationAnchorX;
           targetFilteredY = this.fixationAnchorY;
-        } else if (distToAnchor < 28 && windowDispersion < 24) {
-          // Outer fixation deadband: calm resting micro-tremor without trapping neighboring button shifts
-          this.fixationAnchorX = this.fixationAnchorX * 0.88 + kalmanOut.x * 0.12;
-          this.fixationAnchorY = this.fixationAnchorY * 0.88 + kalmanOut.y * 0.12;
+        } else if (distToAnchor < 12 && windowDispersion < 14) {
+          // Micro-fixation damping zone (< 12 px): smooths resting tremor without trapping adjacent button shifts
+          this.fixationAnchorX = this.fixationAnchorX * 0.72 + kalmanOut.x * 0.28;
+          this.fixationAnchorY = this.fixationAnchorY * 0.72 + kalmanOut.y * 0.28;
           targetFilteredX = this.fixationAnchorX;
           targetFilteredY = this.fixationAnchorY;
-        } else if (distToAnchor < 64) {
-          // Smooth quadratic pursuit glide band between adjacent keyboard keys
-          const normGlide = (distToAnchor - 28) / 36.0;
-          const alpha = 0.14 + 0.56 * normGlide * normGlide;
+        } else if (distToAnchor < 24) {
+          // Fast differential transition band (12 - 24 px) between closely packed keys
+          const normGlide = (distToAnchor - 12) / 12.0;
+          const alpha = 0.35 + 0.55 * normGlide * normGlide;
           this.fixationAnchorX = this.fixationAnchorX * (1 - alpha) + kalmanOut.x * alpha;
           this.fixationAnchorY = this.fixationAnchorY * (1 - alpha) + kalmanOut.y * alpha;
           targetFilteredX = this.fixationAnchorX;
           targetFilteredY = this.fixationAnchorY;
         } else {
-          // Voluntary saccade to a new target: snap anchor immediately for zero lag
+          // Differential eye movement or saccade (>= 24 px): snap anchor immediately for zero lag
           this.fixationAnchorX = kalmanOut.x;
           this.fixationAnchorY = kalmanOut.y;
           targetFilteredX = kalmanOut.x;

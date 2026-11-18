@@ -538,5 +538,38 @@ describe('Modern Gaze Calibration Algorithms (TPS, Polynomial, Projective)', () 
       expect(extraBR.x).toBeGreaterThan(samples[8].targetX);
       expect(extraBR.y).toBeGreaterThan(samples[8].targetY);
     });
+
+    it('should reposition the cursor at the exact recorded pupil imprint (< 0.05px error) and interpolate between points by finite differences', () => {
+      // Simulate a compact mobile viewport (390 x 844) with 9 grid imprints + 3 closely spaced header buttons (28px apart)
+      const imprints: CalibrationSample[] = [
+        { targetX: 40, targetY: 60, rawPupilX: 0.440, rawPupilY: 0.470, headYaw: -0.04, headPitch: 0.03, headRoll: 0 },
+        { targetX: 195, targetY: 60, rawPupilX: 0.500, rawPupilY: 0.470, headYaw: 0.01, headPitch: 0.02, headRoll: 0 },
+        { targetX: 350, targetY: 60, rawPupilX: 0.560, rawPupilY: 0.470, headYaw: 0.05, headPitch: 0.03, headRoll: 0 },
+        { targetX: 40, targetY: 422, rawPupilX: 0.440, rawPupilY: 0.500, headYaw: -0.02, headPitch: 0.00, headRoll: 0 },
+        { targetX: 195, targetY: 422, rawPupilX: 0.500, rawPupilY: 0.500, headYaw: 0.00, headPitch: 0.00, headRoll: 0 },
+        { targetX: 350, targetY: 422, rawPupilX: 0.560, rawPupilY: 0.500, headYaw: 0.03, headPitch: -0.01, headRoll: 0 },
+        { targetX: 40, targetY: 780, rawPupilX: 0.440, rawPupilY: 0.530, headYaw: -0.03, headPitch: -0.04, headRoll: 0 },
+        { targetX: 195, targetY: 780, rawPupilX: 0.500, rawPupilY: 0.530, headYaw: 0.00, headPitch: -0.03, headRoll: 0 },
+        { targetX: 350, targetY: 780, rawPupilX: 0.560, rawPupilY: 0.530, headYaw: 0.04, headPitch: -0.04, headRoll: 0 },
+        // Closely spaced mobile buttons (28 px apart) with tiny pupil differences
+        { targetX: 120, targetY: 22, rawPupilX: 0.471, rawPupilY: 0.461, headYaw: 0.02, headPitch: 0.05, headRoll: 0 },
+        { targetX: 148, targetY: 22, rawPupilX: 0.482, rawPupilY: 0.461, headYaw: -0.03, headPitch: 0.04, headRoll: 0 },
+      ];
+
+      const model = fitCalibrationModel(imprints, 'quadrant-matrix')!;
+      expect(model).not.toBeNull();
+
+      // 1. Every recorded pupil imprint must reposition the cursor at its exact screen coordinate (< 0.05px error),
+      //    regardless of live headYaw / headPitch variations
+      for (const imp of imprints) {
+        const pred = evaluateCalibratedGaze(imp.rawPupilX, imp.rawPupilY, 0.08, -0.06, model, 'quadrant-matrix')!;
+        expect(Math.hypot(pred.x - imp.targetX, pred.y - imp.targetY)).toBeLessThan(0.05);
+      }
+
+      // 2. Differential interpolation midway between (195, 422) at pupil (0.500, 0.500) and (350, 422) at pupil (0.560, 0.500)
+      const midPred = evaluateCalibratedGaze(0.530, 0.500, 0, 0, model, 'quadrant-matrix')!;
+      expect(Math.abs(midPred.x - 272.5)).toBeLessThan(8.0);
+      expect(Math.abs(midPred.y - 422.0)).toBeLessThan(8.0);
+    });
   });
 });

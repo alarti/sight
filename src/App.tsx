@@ -337,7 +337,10 @@ export default function App() {
         eyeTrackerRef.current.setSensorFusionEnabled(activeProfile.sensorFusionEnabled ?? true);
         eyeTrackerRef.current.setIvtStabilization(activeProfile.ivtStabilizationEnabled ?? true);
         eyeTrackerRef.current.setVerticalGainMultiplier(activeProfile.verticalGainMultiplier || 1.15);
-        eyeTrackerRef.current.setBaselineOffsets(activeProfile.baselineOffsetX || 0, activeProfile.baselineOffsetY || 0);
+        eyeTrackerRef.current.setBaselineOffsets(
+          samples.length > 0 ? 0 : (activeProfile.baselineOffsetX || 0),
+          samples.length > 0 ? 0 : (activeProfile.baselineOffsetY || 0)
+        );
         if (activeProfile.neutralCenter) {
           eyeTrackerRef.current.setNeutralCenter(activeProfile.neutralCenter.x, activeProfile.neutralCenter.y);
         }
@@ -915,11 +918,13 @@ export default function App() {
         if (activeProfile?.samples) {
           eyeTrackerRef.current.setCalibrationSamples(activeProfile.samples);
         }
-        if (activeProfile?.calibrationMatrix) {
+        if (activeProfile?.calibrationMatrix && (!activeProfile.samples || activeProfile.samples.length === 0)) {
           eyeTrackerRef.current.setCalibrationMatrix(activeProfile.calibrationMatrix);
         }
-        if (typeof activeProfile?.baselineOffsetX === 'number') {
+        if (typeof activeProfile?.baselineOffsetX === 'number' && (!activeProfile.samples || activeProfile.samples.length === 0)) {
           eyeTrackerRef.current.setBaselineOffsets(activeProfile.baselineOffsetX, activeProfile.baselineOffsetY || 0);
+        } else {
+          eyeTrackerRef.current.setBaselineOffsets(0, 0);
         }
       }
       invalidGazeElapsedRef.current = 0;
@@ -1231,12 +1236,14 @@ export default function App() {
     }
 
     const el = document.elementFromPoint(rawX, rawY);
-    let dwellElement = el?.closest('[data-dwell-id]') as HTMLElement | null;
+    let directHitEl = el?.closest('[data-dwell-id]') as HTMLElement | null;
 
     // When Full-Screen Ocular Rest Mode is active, only allow dwelling on the central wake target
-    if (isOcularRestModeRef.current && dwellElement?.getAttribute('data-dwell-id') !== 'btn-wake-from-rest') {
-      dwellElement = null;
+    if (isOcularRestModeRef.current && directHitEl?.getAttribute('data-dwell-id') !== 'btn-wake-from-rest') {
+      directHitEl = null;
     }
+
+    let dwellElement: HTMLElement | null = directHitEl;
 
     // Detect if gaze is resting inside an Ocular Sanctuary zone (and not on an explicit action button inside it)
     const inSanctuary = Boolean(el?.closest('[data-sanctuary-zone="true"]')) && !dwellElement;
@@ -1251,10 +1258,13 @@ export default function App() {
       neutralCenterRef.current.y += (trackingInfoRef.current.rawGazeY - neutralCenterRef.current.y) * 0.008;
     }
 
+    // Position visual cursor directly at the calibrated pupil-imprint / differential coordinate (rawX, rawY)
     let displayX = rawX;
     let displayY = rawY;
 
-    // Bayesian Posterior Target Decoder (active in bayesian-lock paradigm)
+    // Bayesian Posterior Target Decoder (active in bayesian-lock paradigm):
+    // Always respect a direct geometric hit (`directHitEl`) first so adjacent buttons on compact/mobile
+    // screens never hijack the cursor; only fall back to `bayes.lockedTargetId` in narrow inter-button gaps.
     if (cursorControlModeRef.current === 'bayesian-lock' && !inSanctuary) {
       const visibleTargets = collectVisibleDwellTargets(isOcularRestModeRef.current ? 'btn-wake-from-rest' : null);
       const bayes = bayesianDecoderRef.current.update(
@@ -1271,12 +1281,10 @@ export default function App() {
         setBayesianConfidence(bayes.confidence);
       }
 
-      if (bayes.lockedTargetId) {
+      if (!directHitEl && bayes.lockedTargetId) {
         const lockedEl = document.querySelector(`[data-dwell-id="${CSS.escape(bayes.lockedTargetId)}"]`) as HTMLElement | null;
         if (lockedEl) {
           dwellElement = lockedEl;
-          displayX = bayes.displayX;
-          displayY = bayes.displayY;
         }
       }
     } else if (lastReportedBayesConfRef.current !== 0) {
@@ -1284,12 +1292,12 @@ export default function App() {
       setBayesianConfidence(0);
     }
 
-    // Boundary hysteresis: if already dwelling on a button (and not inside sanctuary), tolerate a 26px micro-tremor margin
+    // Tight boundary hysteresis (8 px): only when in an empty gap between buttons, tolerate tiny border tremor
     if (!dwellElement && !inSanctuary && dwellTargetRef.current) {
       const activeEl = document.querySelector(`[data-dwell-id="${CSS.escape(dwellTargetRef.current)}"]`) as HTMLElement | null;
       if (activeEl) {
         const rect = activeEl.getBoundingClientRect();
-        const margin = 26;
+        const margin = 8;
         if (
           rawX >= rect.left - margin &&
           rawX <= rect.right + margin &&
@@ -1301,20 +1309,11 @@ export default function App() {
       }
     }
 
-    // Smooth magnetic gravity well toward target center when locked/dwelling
-    if (dwellElement && cursorControlModeRef.current !== 'bayesian-lock') {
-      const rect = dwellElement.getBoundingClientRect();
-      const centerX = rect.left + rect.width / 2;
-      const centerY = rect.top + rect.height / 2;
-      displayX = rawX * 0.38 + centerX * 0.62;
-      displayY = rawY * 0.38 + centerY * 0.62;
-    }
-
-    // Sub-pixel visual reticle damping during local fixation (< 28px) to prevent visual fatigue
+    // Sub-pixel micro-tremor smoothing (< 6 px) while preserving immediate differential cursor positioning
     const prevDisplay = liveCursorPosRef.current;
     const stepDisplay = Math.hypot(displayX - prevDisplay.x, displayY - prevDisplay.y);
-    if (stepDisplay < 28 && !isManualAimingModeRef.current) {
-      const blend = stepDisplay < 10 ? 0.18 : 0.42;
+    if (stepDisplay < 6 && !isManualAimingModeRef.current) {
+      const blend = 0.65;
       displayX = prevDisplay.x * (1 - blend) + displayX * blend;
       displayY = prevDisplay.y * (1 - blend) + displayY * blend;
     }

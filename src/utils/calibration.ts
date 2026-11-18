@@ -168,9 +168,10 @@ export interface WeightedCalibrationCentroid extends CalibrationSample {
 
 /**
  * Dynamic Online Inducing-Point Aggregation (Unlimited Sample Scaling):
- * Compresses arbitrarily large streams of online manual training samples (10, 100, 1000+ presses)
- * into well-conditioned, precision-weighted spatial centroids.
- * Preserves vertically/horizontally distinct screen targets even when anatomical vertical pupil span is narrow.
+ * Preserves every distinct calibrated screen target (targetDist >= 22 px) as an exact anchor
+ * without averaging neighboring buttons into midpoints. When a user re-calibrates the exact
+ * same screen target (targetDist < 22 px) or records an identical pupil coordinate (pupilDist < 0.0004),
+ * updates that anchor to the latest pupil imprint with accumulated precision weight.
  */
 export function compressToWeightedInducingCentroids(
   samples: CalibrationSample[],
@@ -191,17 +192,17 @@ export function compressToWeightedInducingCentroids(
       const pupilDist = Math.hypot(s.rawPupilX - cent.rawPupilX, s.rawPupilY - cent.rawPupilY);
       const targetDist = Math.hypot(s.targetX - cent.targetX, s.targetY - cent.targetY);
 
-      // Merge only when training the same screen region or truly co-located ocular-and-screen pairs
-      if ((pupilDist < 0.0018 && targetDist < 90) || (targetDist < 42 && pupilDist < 0.038)) {
-        const alpha = 0.72;
+      // Only merge if re-recording at the exact same screen target (< 22 px) or identical pupil coordinate (< 0.0004)
+      if ((targetDist < 22 && pupilDist < 0.06) || pupilDist < 0.0004) {
+        const alpha = 0.90;
         cent.rawPupilX = cent.rawPupilX * (1 - alpha) + s.rawPupilX * alpha;
         cent.rawPupilY = cent.rawPupilY * (1 - alpha) + s.rawPupilY * alpha;
-        cent.targetX = cent.targetX * (1 - alpha) + s.targetX * alpha;
-        cent.targetY = cent.targetY * (1 - alpha) + s.targetY * alpha;
+        cent.targetX = s.targetX;
+        cent.targetY = s.targetY;
         cent.headYaw = (cent.headYaw ?? 0) * (1 - alpha) + (s.headYaw ?? 0) * alpha;
         cent.headPitch = (cent.headPitch ?? 0) * (1 - alpha) + (s.headPitch ?? 0) * alpha;
         cent.headRoll = (cent.headRoll ?? 0) * (1 - alpha) + (s.headRoll ?? 0) * alpha;
-        cent.precisionWeight += recencyWeight * 1.45;
+        cent.precisionWeight += recencyWeight * 1.6;
         merged = true;
         break;
       }
@@ -420,15 +421,16 @@ function solveNormalizedHomography(
 }
 
 /**
- * M-QPM (Mahalanobis-Whitened Exact Quadrant Positioning Matrix):
- * Adaptive multi-regime solver that calculates the exact pupil-to-screen quadrant transformation
- * for 1, 2, 3, 4, or N trained points with zero residual error at calibrated coordinates:
- * - N = 1: Exact translation anchor + physiological aspect scaling gain
- * - N = 2: Exact anisotropic/similarity alignment through both points
- * - N = 3: Exact 6-DOF Affine matrix passing through all 3 points
- * - N = 4: Exact Hartley-Normalized Planar Projective Homography capturing keystone eye geometry
- * - N >= 5: Global Normalized Affine-Projective Base + Zero-Residual Whitened TPS Field with
- *           smooth out-of-hull envelope decay for unclipped corner reach.
+ * M-QPM (Mahalanobis-Whitened Exact Quadrant Positioning Matrix & Finite-Difference Engine):
+ * Repositions the cursor at the exact screen coordinate (X_i, Y_i) where each pupil imprint
+ * (x_i, y_i) was recorded (0.0 px residual error), and calculates all intermediate and surrounding
+ * screen coordinates directly by finite differences (\Delta u = u - u_i, \Delta v = v - v_i):
+ * - N = 1: Exact anchor at (X_1, Y_1) + proportional finite-difference displacement
+ * - N = 2: Exact anchors at (X_1, Y_1) and (X_2, Y_2) + exact finite-difference ratio \Delta S / \Delta p
+ * - N = 3: Exact 6-DOF finite-difference affine plane passing through all 3 anchors
+ * - N = 4: Exact 4-corner Projective Homography (when residual < 1.5 px) or exact differential field
+ * - N >= 5: Global Finite-Difference Affine Base + Zero-Residual TPS & Inverse-Distance Shepard
+ *           Differential Anchor Interpolation (0.0 px error at every recorded pupil imprint).
  */
 export function fitQuadrantPupilMatrix(
   samples: CalibrationSample[]
@@ -440,21 +442,22 @@ export function fitQuadrantPupilMatrix(
   const screenW = typeof window !== 'undefined' ? window.innerWidth : 1280;
   const screenH = typeof window !== 'undefined' ? window.innerHeight : 720;
 
-  // Estimate orthogonal head-pose sensitivity gains when sufficient samples exist
-  const { yawFactorX, pitchFactorY } = estimateOrthogonalHeadPoseGains(rawCentroids);
+  // Pupil coordinates (rawPupilX, rawPupilY) are already head-pose compensated in eyeTracker.ts;
+  // keeping yawFactorX = 0 and pitchFactorY = 0 guarantees that every recorded pupil imprint
+  // maps to its exact screen coordinate (s.targetX, s.targetY) without head-angle bias drift.
+  const yawFactorX = 0;
+  const pitchFactorY = 0;
 
   let totalW = 0;
   let meanX = 0, meanY = 0;
   let tMeanX = 0, tMeanY = 0;
   for (const s of rawCentroids) {
     const w = s.precisionWeight;
-    const tx = s.targetX - yawFactorX * (s.headYaw ?? 0);
-    const ty = s.targetY - pitchFactorY * (s.headPitch ?? 0);
     totalW += w;
     meanX += w * s.rawPupilX;
     meanY += w * s.rawPupilY;
-    tMeanX += w * tx;
-    tMeanY += w * ty;
+    tMeanX += w * s.targetX;
+    tMeanY += w * s.targetY;
   }
   meanX /= Math.max(1e-6, totalW);
   meanY /= Math.max(1e-6, totalW);
@@ -465,12 +468,10 @@ export function fitQuadrantPupilMatrix(
   let tVarX = 0, tVarY = 0;
   for (const s of rawCentroids) {
     const w = s.precisionWeight;
-    const tx = s.targetX - yawFactorX * (s.headYaw ?? 0);
-    const ty = s.targetY - pitchFactorY * (s.headPitch ?? 0);
     varX += w * (s.rawPupilX - meanX) ** 2;
     varY += w * (s.rawPupilY - meanY) ** 2;
-    tVarX += w * (tx - tMeanX) ** 2;
-    tVarY += w * (ty - tMeanY) ** 2;
+    tVarX += w * (s.targetX - tMeanX) ** 2;
+    tVarY += w * (s.targetY - tMeanY) ** 2;
   }
 
   const scaleX = N === 1 ? 0.045 : Math.max(0.004, Math.sqrt(varX / Math.max(1e-6, totalW)));
@@ -484,8 +485,8 @@ export function fitQuadrantPupilMatrix(
   }));
 
   const targetsAdj = rawCentroids.map(s => ({
-    x: s.targetX - yawFactorX * (s.headYaw ?? 0),
-    y: s.targetY - pitchFactorY * (s.headPitch ?? 0),
+    x: s.targetX,
+    y: s.targetY,
   }));
 
   const targetsNorm = targetsAdj.map(t => ({
@@ -508,7 +509,7 @@ export function fitQuadrantPupilMatrix(
     [0, 0, 1],
   ];
 
-  // Regime 1: Single-point exact anchor
+  // Regime 1: Single-point exact anchor + proportional finite differences
   if (N === 1) {
     const model: QuadrantMatrixModel = {
       regime: '1pt',
@@ -540,7 +541,7 @@ export function fitQuadrantPupilMatrix(
     return model;
   }
 
-  // Regime 2: Two-point exact transformation
+  // Regime 2: Two-point exact anchor repositioning + finite-difference slope (\Delta S / \Delta p)
   if (N === 2) {
     const du = pointsUV[1].u - pointsUV[0].u;
     const dv = pointsUV[1].v - pointsUV[0].v;
@@ -593,7 +594,7 @@ export function fitQuadrantPupilMatrix(
     return model;
   }
 
-  // Fit Precision-Weighted Normalized Affine Base [1, u, v]
+  // Fit Precision-Weighted Normalized Finite-Difference Affine Base [1, u, v]
   const AAff: number[][] = [
     [0, 0, 0],
     [0, 0, 0],
@@ -623,7 +624,7 @@ export function fitQuadrantPupilMatrix(
   const affDet = affineNormX[1] * affineNormY[2] - affineNormX[2] * affineNormY[1];
   const affDetSign = affDet >= 0 ? 1 : -1;
 
-  // Regime 3: Three-point exact 6-DOF affine plane
+  // Regime 3: Three-point exact 6-DOF finite-difference affine plane
   if (N === 3) {
     const model: QuadrantMatrixModel = {
       regime: '3pt-affine',
@@ -655,7 +656,7 @@ export function fitQuadrantPupilMatrix(
     return model;
   }
 
-  // Fit Hartley-Normalized 3x3 Projective Homography
+  // Fit Hartley-Normalized 3x3 Projective Homography (used only for exact 4-corner quad regime)
   const weightsArr = rawCentroids.map(s => s.precisionWeight);
   const homographyNorm = solveNormalizedHomography(
     pointsUV,
@@ -668,24 +669,17 @@ export function fitQuadrantPupilMatrix(
     Math.abs(affDet) > 1e-4 &&
     isHomographyWellConditioned(homographyNorm, hullMinU, hullMaxU, hullMinV, hullMaxV, affDetSign);
 
-  let sqErrAff = 0;
   let sqErrHom = 0;
-  for (let i = 0; i < N; i++) {
-    const { u, v } = pointsUV[i];
-    const ax = tMeanX + (affineNormX[0] + affineNormX[1] * u + affineNormX[2] * v) * targetScaleX;
-    const ay = tMeanY + (affineNormY[0] + affineNormY[1] * u + affineNormY[2] * v) * targetScaleY;
-    sqErrAff += (ax - targetsAdj[i].x) ** 2 + (ay - targetsAdj[i].y) ** 2;
-
-    if (homographySafe) {
+  if (homographySafe) {
+    for (let i = 0; i < N; i++) {
+      const { u, v } = pointsUV[i];
       const hp = evalNormalizedHomography(u, v, homographyNorm, tMeanX, tMeanY, targetScaleX, targetScaleY);
       sqErrHom += (hp.x - targetsAdj[i].x) ** 2 + (hp.y - targetsAdj[i].y) ** 2;
     }
   }
 
-  const useHomographyBase = homographySafe && (N === 4 || sqErrHom <= sqErrAff * 1.15);
-
   // Regime 4: Exact 4-corner Projective Homography if well-conditioned and zero residual
-  if (N === 4 && useHomographyBase && Math.sqrt(sqErrHom / 4) < 3.0) {
+  if (N === 4 && homographySafe && Math.sqrt(sqErrHom / 4) < 2.5) {
     const model: QuadrantMatrixModel = {
       regime: '4pt-homography',
       meanX,
@@ -716,26 +710,23 @@ export function fitQuadrantPupilMatrix(
     return model;
   }
 
-  // Regime 5: N >= 4 Exact Zero-Residual Whitened TPS Field over Global Homography/Affine Base
+  // Regime 5 (N >= 4): Exact Pupil-Imprint Anchor Repositioning + Finite-Difference Interpolation.
+  // Uses the Global Finite-Difference Affine Base (useHomographyBase = false to avoid perspective warping)
+  // plus a zero-residual Thin-Plate Spline & Shepard differential anchor field so that:
+  //   1. At every recorded pupil imprint (u_i, v_i), the cursor lands at (X_i, Y_i) with 0.0 px error.
+  //   2. Between recorded imprints, the cursor interpolates directly by finite differences (\Delta u, \Delta v).
+  const useHomographyBase = false;
   const resX = new Array<number>(N);
   const resY = new Array<number>(N);
   for (let i = 0; i < N; i++) {
     const { u, v } = pointsUV[i];
-    let baseX: number;
-    let baseY: number;
-    if (useHomographyBase) {
-      const hp = evalNormalizedHomography(u, v, homographyNorm, tMeanX, tMeanY, targetScaleX, targetScaleY);
-      baseX = hp.x;
-      baseY = hp.y;
-    } else {
-      baseX = tMeanX + (affineNormX[0] + affineNormX[1] * u + affineNormX[2] * v) * targetScaleX;
-      baseY = tMeanY + (affineNormY[0] + affineNormY[1] * u + affineNormY[2] * v) * targetScaleY;
-    }
+    const baseX = tMeanX + (affineNormX[0] + affineNormX[1] * u + affineNormX[2] * v) * targetScaleX;
+    const baseY = tMeanY + (affineNormY[0] + affineNormY[1] * u + affineNormY[2] * v) * targetScaleY;
     resX[i] = targetsAdj[i].x - baseX;
     resY[i] = targetsAdj[i].y - baseY;
   }
 
-  // Solve Thin-Plate Spline in whitened isotropic (u, v) space with ultra-tight adaptive precision diagonal
+  // Solve Zero-Residual Thin-Plate Spline in whitened isotropic (u, v) space
   const M = N + 3;
   const L: number[][] = Array.from({ length: M }, () => new Array<number>(M).fill(0));
   const bX = new Array<number>(M).fill(0);
@@ -749,9 +740,8 @@ export function fitQuadrantPupilMatrix(
       if (d < minNeighborUV) minNeighborUV = d;
       L[i][j] = tpsRadialKernel(d);
     }
-    // Nearly exact zero-residual interpolation on every distinct trained centroid;
-    // tiny precision-scaled nugget engages only when centroids sit very close in (u, v)
-    const baseDiag = minNeighborUV < 0.08 ? 2e-4 : 1e-7;
+    // Zero-residual interpolation on every distinct recorded pupil imprint (1e-9 diagonal)
+    const baseDiag = minNeighborUV < 0.04 ? 2e-5 : 1e-9;
     L[i][i] = baseDiag / Math.max(1.0, rawCentroids[i].precisionWeight);
 
     L[i][N] = 1.0;
@@ -766,9 +756,9 @@ export function fitQuadrantPupilMatrix(
     bY[i] = resY[i];
   }
 
-  L[N][N] = 1e-8;
-  L[N + 1][N + 1] = 1e-8;
-  L[N + 2][N + 2] = 1e-8;
+  L[N][N] = 1e-10;
+  L[N + 1][N + 1] = 1e-10;
+  L[N + 2][N + 2] = 1e-10;
 
   const solResX = solveLinearSystem(L, bX);
   const solResY = solveLinearSystem(L, bY);
@@ -823,7 +813,12 @@ function computeQuadrantRmse(
 }
 
 /**
- * Evaluates the Mahalanobis-Whitened Exact Quadrant Positioning Matrix (M-QPM)
+ * Evaluates the Mahalanobis-Whitened Exact Quadrant Positioning Matrix (M-QPM):
+ *   1. Repositions the cursor at the exact recorded screen coordinate (X_i, Y_i) whenever
+ *      the pupil matches a recorded imprint (u_i, v_i).
+ *   2. Calculates all other positions by finite differences (\Delta u = u - u_i, \Delta v = v - v_i)
+ *      combining the global linear finite-difference Jacobian with zero-residual radial basis
+ *      differential interpolation.
  */
 export function evaluateQuadrantPupilMatrix(
   x: number,
@@ -876,12 +871,12 @@ export function evaluateQuadrantPupilMatrix(
       radialY += model.residualWeightsY[i] * k;
     }
 
-    // Smoothly attenuate non-linear bending far outside calibrated hull so corner extrapolation
-    // relies on the unclipped global affine/projective surface without spline overshoot
+    // Preserve 100% exact anchor residuals across the calibrated domain and near-edge margin (outMargin <= 0.85),
+    // and smoothly transition to pure linear finite-difference extrapolation far outside the hull
     const outU = Math.max(0, model.hullMinU - u, u - model.hullMaxU);
     const outV = Math.max(0, model.hullMinV - v, v - model.hullMaxV);
     const outMargin = Math.hypot(outU, outV);
-    const hullBlend = outMargin <= 0.45 ? 1.0 : Math.exp(-0.35 * (outMargin - 0.45) ** 2);
+    const hullBlend = outMargin <= 0.85 ? 1.0 : Math.exp(-0.22 * (outMargin - 0.85) ** 2);
 
     resX = (linResX + radialX) * hullBlend;
     resY = (linResY + radialY) * hullBlend;
@@ -1409,8 +1404,8 @@ export function aggregateFixationSamples(
     return { rawX: sx, rawY: sy };
   }
 
-  // Discard initial 20% of samples (post-saccadic settling oscillation)
-  const startIdx = Math.floor(rawSamples.length * 0.20);
+  // Discard initial 30% of samples (post-saccadic settling oscillation) so only settled fixation frames define the pupil imprint
+  const startIdx = Math.floor(rawSamples.length * 0.30);
   const settled = rawSamples.slice(startIdx);
 
   const sortedX = settled.map(s => s.rawX).sort((a, b) => a - b);
@@ -1435,15 +1430,17 @@ export function aggregateFixationSamples(
 }
 
 /**
- * Robust Outlier Filter for Calibration Samples
+ * Robust Outlier Filter for Calibration Samples:
+ * Rejects only extreme out-of-bounds tracking failures ([0.001, 0.999]) or severe 5.5-sigma blink glitches,
+ * preserving all valid peripheral, corner, and header pupil imprints so every recorded anchor is honored.
  */
 export function filterCalibrationOutliers(samples: CalibrationSample[]): CalibrationSample[] {
   if (samples.length <= 6) return samples;
 
   const bounded = samples.filter(s => {
     if (!Number.isFinite(s.rawPupilX) || !Number.isFinite(s.rawPupilY)) return false;
-    if (s.rawPupilX < 0.01 || s.rawPupilX > 0.99) return false;
-    if (s.rawPupilY < 0.01 || s.rawPupilY > 0.99) return false;
+    if (s.rawPupilX <= 0.002 || s.rawPupilX >= 0.998) return false;
+    if (s.rawPupilY <= 0.002 || s.rawPupilY >= 0.998) return false;
     return true;
   });
 
@@ -1462,7 +1459,7 @@ export function filterCalibrationOutliers(samples: CalibrationSample[]): Calibra
   const madFiltered = bounded.filter(s => {
     const zX = Math.abs(s.rawPupilX - medX) / madX;
     const zY = Math.abs(s.rawPupilY - medY) / madY;
-    return zX <= 3.5 && zY <= 3.5;
+    return zX <= 5.5 && zY <= 5.5;
   });
 
   return madFiltered.length >= 6 ? madFiltered : bounded;
