@@ -23,9 +23,10 @@ export type { CalibrationSample, EyeTrackingData, HeadPoseData, CalibrationAlgor
 
 /**
  * [Paper Section 6.3: Temporal Smoothing: 1€ Filter]
- * Casiez et al. (2012) speed-based adaptive low-pass filter.
- * Dynamically computes cutoff frequency fc = fc_min + beta * |dx/dt|
- * to eliminate resting micro-tremor while avoiding saccadic phase lag.
+ * Casiez et al. (2012) speed-based adaptive first-order low-pass filter.
+ * Dynamically computes the cutoff frequency fc(t) = fc_min + beta * |dx/dt|
+ * and smoothing factor alpha(dt, fc) = 1 / (1 + 1 / (2 * pi * fc * dt))
+ * to suppress resting micro-tremor (foveal jitter) while eliminating phase lag during rapid saccades.
  */
 export class OneEuroFilter {
   private minCutoff: number;
@@ -49,14 +50,17 @@ export class OneEuroFilter {
       return { value: x, velocity: 0 };
     }
 
+    // Clamp time delta dt in seconds to avoid numerical division by zero
     const dt = Math.max((timestamp - this.tPrev) / 1000.0, 1e-4);
     this.tPrev = timestamp;
 
+    // 1. Estimate discrete velocity dx/dt and smooth it using derivative cutoff dCutoff
     const dx = (x - (this.xPrev ?? x)) / dt;
     const aD = 1.0 / (1.0 + 1.0 / (2 * Math.PI * this.dCutoff * dt));
     const edx = aD * dx + (1 - aD) * this.dxPrev;
     this.dxPrev = edx;
 
+    // 2. Modulate position cutoff frequency proportionally to instantaneous eye speed |edx|
     const cutoff = this.minCutoff + this.beta * Math.abs(edx);
     const a = 1.0 / (1.0 + 1.0 / (2 * Math.PI * cutoff * dt));
     const xFiltered = a * x + (1 - a) * (this.xPrev ?? x);
@@ -74,8 +78,15 @@ export class OneEuroFilter {
 
 /**
  * 2D Constant-Velocity State-Space Kalman Filter with Continuous Cubic-Sigmoid Mahalanobis Innovation Gate:
- * Tracks [x, y, vx, vy]^T and adapts measurement noise R_k and velocity damping continuously
- * so resting fixations achieve sub-pixel stability while voluntary saccades incur zero lag.
+ * Tracks state vector x_k = [x, y, v_x, v_y]^T under linear kinematics and continuously adapts
+ * the measurement noise covariance R_k and velocity damping factor according to the Euclidean
+ * innovation norm ||z_k - H * x_{k|k-1}||_2:
+ * - Fixation Regime (||nu|| <= 22 px): High measurement noise R_k = 26.0 and aggressive velocity damping
+ *   suppress high-frequency landmark jitter and prevent post-saccadic overshoot.
+ * - Smooth Pursuit Regime (22 px < ||nu|| <= 64 px): Hermite cubic-sigmoid interpolation s(t) = 3t^2 - 2t^3
+ *   smoothly transitions filter bandwidth between fixation lock and saccadic tracking.
+ * - Voluntary Saccade Regime (||nu|| > 64 px): Low measurement noise R_k = 0.22 enables near-zero-latency
+ *   cursor relocation across the screen.
  */
 export class KalmanGazeFilter {
   private x = 0;
@@ -99,7 +110,7 @@ export class KalmanGazeFilter {
     const dt = Math.min(0.1, Math.max(0.001, (timestampMs - this.lastT) / 1000.0));
     this.lastT = timestampMs;
 
-    // 1. State Prediction
+    // 1. Prior State & Error Covariance Prediction (x_{k|k-1} = F * x_{k-1}, P_{k|k-1} = F * P * F^T + Q)
     const predX = this.x + this.vx * dt;
     const predY = this.y + this.vy * dt;
     const qPos = 1.8;
@@ -107,7 +118,7 @@ export class KalmanGazeFilter {
     this.pPos += this.pVel * dt * dt + qPos;
     this.pVel += qVel * dt;
 
-    // 2. Innovation & Continuous Mahalanobis Saccadic Gate
+    // 2. Innovation Residual & Continuous Cubic-Sigmoid Mahalanobis Saccadic Gate
     const innovX = measX - predX;
     const innovY = measY - predY;
     const innovDist = Math.hypot(innovX, innovY);
@@ -119,7 +130,7 @@ export class KalmanGazeFilter {
       rMeas = 26.0;
       velDamping = innovDist <= 10 ? 0.08 : 0.22;
     } else if (innovDist <= 64) {
-      // Smooth pursuit regime: cubic-sigmoid transition
+      // Smooth pursuit regime: C^1 Hermite cubic-sigmoid transition s(t) = t^2 * (3 - 2t)
       const t = (innovDist - 22) / 42.0;
       const smoothT = t * t * (3 - 2 * t);
       rMeas = 26.0 * (1 - smoothT) + 1.4 * smoothT;
@@ -130,6 +141,7 @@ export class KalmanGazeFilter {
       velDamping = 0.72;
     }
 
+    // 3. Optimal Kalman Gain & Posterior State Update
     const kPos = this.pPos / (this.pPos + rMeas);
     const kVel = (this.pVel * dt) / (this.pPos + rMeas);
 
@@ -138,6 +150,7 @@ export class KalmanGazeFilter {
     this.vx = (this.vx + kVel * (innovX / dt)) * velDamping;
     this.vy = (this.vy + kVel * (innovY / dt)) * velDamping;
 
+    // 4. Posterior Covariance Update P_{k|k} = (I - K * H) * P_{k|k-1}
     this.pPos *= (1.0 - kPos);
     this.pVel *= (1.0 - Math.min(0.9, kVel * dt));
 

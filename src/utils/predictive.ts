@@ -79,6 +79,12 @@ export const PREDICTIVE_DICTIONARY_EN: Record<string, string[]> = {
   "im": ["I'm doing well, thank you.", "I'm a bit tired today."],
 };
 
+/**
+ * Circadian Context-Aware Prior Generator:
+ * Selects high-probability clinical phrases conditioned on the local time of day
+ * (Morning [06:00-11:59], Afternoon [12:00-19:59], Night [20:00-05:59]) so patients
+ * can communicate routine care requests with zero keystrokes when the input buffer is empty.
+ */
 export function getCircadianGreetingPhrases(language: Language = 'es', hour: number = new Date().getHours()): string[] {
   if (language === 'en') {
     if (hour >= 6 && hour < 12) {
@@ -117,6 +123,11 @@ export function getCircadianGreetingPhrases(language: Language = 'es', hour: num
   ];
 }
 
+/**
+ * Online Adaptive N-Gram / Phrase Frequency Histogram Updater:
+ * Increments empirical usage counts for spoken utterances and prunes the distribution
+ * to the top-K (K = 60) highest-probability phrases to bound local storage complexity O(1).
+ */
 export function recordLearnedUserPhrase(
   currentMap: Record<string, number> | undefined,
   phrase: string
@@ -128,7 +139,7 @@ export function recordLearnedUserPhrase(
   const next = { ...(currentMap || {}) };
   next[clean] = (next[clean] || 0) + 1;
 
-  // Keep top 60 most frequent phrases to bound storage size
+  // Retain top 60 most frequent phrases to guarantee bounded memory footprint
   const entries = Object.entries(next);
   if (entries.length > 60) {
     entries.sort((a, b) => b[1] - a[1]);
@@ -137,6 +148,15 @@ export function recordLearnedUserPhrase(
   return next;
 }
 
+/**
+ * Hierarchical Prefix-Tree & Maximum-A-Posteriori (MAP) Clinical Sentence Predictor:
+ * Evaluates candidate completions in descending priority order:
+ * 1. Patient-specific learned phrase histogram (sorted by empirical frequency count).
+ * 2. Circadian prior greeting when the input buffer is empty.
+ * 3. Exact prefix match in the bilingual clinical lexicon (first-token or last-token prefix).
+ * 4. Substring match across the core ALS clinical corpus.
+ * 5. Courteous conversational continuation fallback.
+ */
 export function getAiAutocompleteSuggestion(
   text: string,
   language: Language = 'es',
@@ -146,7 +166,7 @@ export function getAiAutocompleteSuggestion(
   const defaultSentences = language === 'en' ? DEFAULT_PREDICTIVE_SENTENCES_EN : DEFAULT_PREDICTIVE_SENTENCES_ES;
   const dict = language === 'en' ? PREDICTIVE_DICTIONARY_EN : PREDICTIVE_DICTIONARY_ES;
 
-  // 1. Check user's personalized high-frequency learned phrases first
+  // 1. Evaluate patient's personalized high-frequency learned phrases first
   if (learnedPhrases && Object.keys(learnedPhrases).length > 0) {
     const sortedLearned = Object.entries(learnedPhrases)
       .sort((a, b) => b[1] - a[1])
@@ -162,15 +182,18 @@ export function getAiAutocompleteSuggestion(
     }
   }
 
+  // 2. Empty input buffer: return circadian-conditioned clinical greeting
   if (!clean) {
     const circadian = getCircadianGreetingPhrases(language);
     return circadian[0] || defaultSentences[0];
   }
 
+  // 3. Exact key lookup in prefix lexicon
   if (dict[clean]) {
     return dict[clean][0];
   }
 
+  // 4. Token-level prefix matching on full string or active trailing word
   const words = clean.split(/\s+/);
   const lastWord = words[words.length - 1];
 
@@ -180,6 +203,7 @@ export function getAiAutocompleteSuggestion(
     }
   }
 
+  // 5. Substring search across default clinical sentence corpus
   const matching = defaultSentences.find(s => s.toLowerCase().startsWith(clean) || s.toLowerCase().includes(clean));
   if (matching) return matching;
 

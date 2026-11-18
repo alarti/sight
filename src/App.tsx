@@ -30,21 +30,24 @@ import { ProfileManagementModal } from './components/ProfileManagementModal.tsx'
 import { ScientificPaperModal } from './components/ScientificPaperModal.tsx';
 import { VoiceCloningModal } from './components/VoiceCloningModal.tsx';
 import { ClinicalCommercialModal } from './components/ClinicalCommercialModal.tsx';
-import { OrientationLockOverlay } from './components/OrientationLockOverlay.tsx';
 import { ManualAimingHud } from './components/ManualAimingHud.tsx';
 import { Language, translations } from './i18n/translations.ts';
 
-// 2D discrete keyboard matrix for directional eye glances
+/**
+ * 2D discrete keyboard topological matrix for quantized directional eye-glance stepping
+ * (Paper Section 6.1: Hysteretic Quantized Gaze Stepper).
+ * Maps row/column coordinates (r, c) to target key IDs for low-amplitude ocular navigation.
+ */
 const getGridMap = (lang: Language = 'es'): string[][] => [
-  // Row 0: AI Autocomplete
+  // Row 0: AI Autocomplete Predictive Card
   ['ai-autocomplete-card'],
-  // Row 1: Action buttons
+  // Row 1: Primary Speech & Editing Action Keys
   ['key-speak', 'key-space', 'key-backspace'],
-  // Row 2: Letters row 1
+  // Row 2: Top QWERTY Row
   ['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
-  // Row 3: Letters row 2
+  // Row 3: Home ASDF Row
   ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', lang === 'en' ? ';' : 'Ñ'],
-  // Row 4: Letters row 3
+  // Row 4: Bottom ZXCV Row
   ['Z', 'X', 'C', 'V', 'B', 'N', 'M', ',', '.', '?']
 ];
 
@@ -1194,7 +1197,23 @@ export default function App() {
     }
   }, [sensitivityX, sensitivityY, smoothing]);
 
-  // Continuous Gaze & Dwell Engine with Bayesian Target Lock + Ocular Sanctuary Midas-Touch Protection
+  /**
+   * [Paper Section 5.1 & 6.2: Continuous Gaze & Dwell Engine with Bayesian Target Lock
+   * and Anti-Midas Ocular Sanctuary Protection]
+   *
+   * Evaluates the current gaze coordinates (rawX, rawY) at timestamp `now`:
+   *   1. Enforces post-activation refractory cooldown to prevent accidental double-triggers.
+   *   2. Checks whether gaze is parked inside a `[data-sanctuary-zone="true"]` neutral zone;
+   *      if so, disarms dwell accumulation and applies passive zero-effort neutral-center drift
+   *      compensation (\eta = 0.008) during fixation.
+   *   3. When `bayesian-lock` mode is active, invokes the Sequential Bayesian Posterior Decoder
+   *      across all visible `[data-dwell-id]` targets to compute posterior probabilities P(T_i | g_{1:t})
+   *      and lock onto the highest-posterior target with smooth magnetic centroid attraction.
+   *   4. Applies a 26 px boundary hysteresis margin around the currently dwelled target to absorb
+   *      physiological oculomotor micro-tremor and nystagmus.
+   *   5. Applies sub-pixel visual reticle damping during local fixation (< 28 px step) to eliminate
+   *      visual jitter fatigue, and triggers online calibration reinforcement upon 100% dwell completion.
+   */
   const updateGazeAndDwell = useCallback((
     rawX: number,
     rawY: number,
@@ -1375,7 +1394,7 @@ export default function App() {
     }
   }, [trainAlgorithmOnSuccess, isAdaptiveDwellEnabled]);
 
-  // Squint / Blink Trigger
+  // Intentional Squint / Sustained Eyelid Narrowing Trigger
   useEffect(() => {
     if (trackingInfo?.isSquinting && !isManualAimingModeRef.current && !isOcularRestModeRef.current) {
       const now = performance.now();
@@ -1411,7 +1430,16 @@ export default function App() {
     }
   }, [trackingInfo?.isSquinting, trainAlgorithmOnSuccess]);
 
-  // 60 FPS Eye Tracking & Directional Stepper Loop
+  /**
+   * 60 FPS Real-Time Ocular Tracking & Hysteretic Directional Stepper Loop:
+   *   - Acquires smoothed/fused binocular gaze telemetry from `BrowserAIEyeTracker.processFrame()`.
+   *   - Implements a 750 ms blink-freeze grace window so natural involuntary blinks pause
+   *     the dwell timer in-place rather than resetting selection progress.
+   *   - Detects intentional sustained blinks (>= 420 ms) on the virtual keyboard to trigger
+   *     immediate AI phrase completion.
+   *   - Routes valid gaze telemetry to either the Quantized Directional Stepper (Section 6.1)
+   *     or the Continuous Gaze & Dwell Engine (Bayesian Lock / Ocular Trackball / Two-Stage Loupe).
+   */
   useEffect(() => {
     if (!cameraActive || trackingMode !== 'webcam') return;
 
@@ -1635,7 +1663,7 @@ export default function App() {
     };
   }, [cameraActive, trackingMode, sensitivityX, sensitivityY, stepSelector, executeCurrentStickyKey, updateGazeAndDwell]);
 
-  // Mouse emulation mode
+  // Mouse / Pointer emulation fallback when webcam is inactive
   useEffect(() => {
     if (cameraActive && trackingMode !== 'mouse') return;
     if (isTrackingPausedRef.current) {
@@ -1662,11 +1690,8 @@ export default function App() {
   return (
     <div
       data-ocular-theme={ocularTheme}
-      className="min-h-screen bg-[var(--bg-canvas)] text-[var(--text-primary)] flex flex-col font-sans select-none relative overflow-x-hidden transition-colors duration-300"
+      className="h-[100dvh] max-h-[100dvh] overflow-hidden bg-[var(--bg-canvas)] text-[var(--text-primary)] flex flex-col font-sans select-none relative transition-colors duration-300"
     >
-      {/* MOBILE ROTATION & ORIENTATION LOCK OVERLAY */}
-      <OrientationLockOverlay currentLanguage={currentLanguage} />
-
       <video ref={videoRef} autoPlay playsInline muted className="hidden" />
       <input 
         ref={fileInputRef} 
@@ -1856,7 +1881,7 @@ export default function App() {
         onStartDragReticle={handleStartDragReticle}
       />
 
-      {/* TOP HEADER */}
+      {/* TOP HEADER (ALL CONTROLS VISIBLE & GAZE-TARGETABLE ON MOBILE AND DESKTOP) */}
       <HeaderBar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
@@ -1881,81 +1906,98 @@ export default function App() {
         onToggleLanguage={handleToggleLanguage}
       />
 
-      {/* COLLAPSIBLE ADVANCED PANEL */}
-      <AdvancedPanel
-        isOpen={isAdvancedPanelOpen}
-        profiles={profiles}
-        activeProfileId={activeProfileId}
-        setActiveProfileId={setActiveProfileId}
-        activeProfile={activeProfile}
-        onCreateNewProfile={handleCreateNewProfile}
-        sensitivityX={sensitivityX}
-        sensitivityY={sensitivityY}
-        onSensitivityXChange={handleSensitivityXChange}
-        onSensitivityYChange={handleSensitivityYChange}
-        invertY={invertY}
-        onToggleInvertY={handleToggleInvertY}
-        dwellTimeMs={dwellTimeMs}
-        setDwellTimeMs={handleDwellTimeChange}
-        isAdaptiveDwellEnabled={isAdaptiveDwellEnabled}
-        setIsAdaptiveDwellEnabled={handleAdaptiveDwellChange}
-        onLaunchGridWizard={() => setIsGridWizardOpen(true)}
-        onCenterCalibration={handleCenterCalibration}
-        onExportBackup={handleExportBackup}
-        onRestoreBackupClick={handleRestoreBackupClick}
-        cameraActive={cameraActive}
-        onStartCamera={startCamera}
-        onStopCamera={stopCamera}
-        debugCanvasRef={debugCanvasRef}
-        trackingInfo={trackingInfo}
-        calibrationModel={calibrationModel}
-        onCalibrationModelChange={handleCalibrationModelChange}
-        cursorControlMode={cursorControlMode}
-        onCursorControlModeChange={handleCursorControlModeChange}
-        sensorFusionEnabled={sensorFusionEnabled}
-        onToggleSensorFusion={handleToggleSensorFusion}
-        ivtStabilizationEnabled={ivtStabilizationEnabled}
-        onToggleIvtStabilization={handleToggleIvtStabilization}
-        verticalGainMultiplier={verticalGainMultiplier}
-        onVerticalGainChange={handleVerticalGainChange}
-        onOpenPaperModal={() => setIsPaperModalOpen(true)}
-        onOpenVoiceCloningModal={() => setIsVoiceCloningModalOpen(true)}
-        currentLanguage={currentLanguage}
-      />
+      {/* COLLAPSIBLE ADVANCED PANEL OVERLAY (Does not displace the 100dvh single-screen layout) */}
+      {isAdvancedPanelOpen && (
+        <div className="fixed inset-x-0 top-[76px] lg:top-[52px] bottom-0 z-40 overflow-y-auto bg-[var(--bg-canvas)]/95 backdrop-blur-md">
+          <AdvancedPanel
+            isOpen={isAdvancedPanelOpen}
+            profiles={profiles}
+            activeProfileId={activeProfileId}
+            setActiveProfileId={setActiveProfileId}
+            activeProfile={activeProfile}
+            onCreateNewProfile={handleCreateNewProfile}
+            sensitivityX={sensitivityX}
+            sensitivityY={sensitivityY}
+            onSensitivityXChange={handleSensitivityXChange}
+            onSensitivityYChange={handleSensitivityYChange}
+            invertY={invertY}
+            onToggleInvertY={handleToggleInvertY}
+            dwellTimeMs={dwellTimeMs}
+            setDwellTimeMs={handleDwellTimeChange}
+            isAdaptiveDwellEnabled={isAdaptiveDwellEnabled}
+            setIsAdaptiveDwellEnabled={handleAdaptiveDwellChange}
+            onLaunchGridWizard={() => setIsGridWizardOpen(true)}
+            onCenterCalibration={handleCenterCalibration}
+            onExportBackup={handleExportBackup}
+            onRestoreBackupClick={handleRestoreBackupClick}
+            cameraActive={cameraActive}
+            onStartCamera={startCamera}
+            onStopCamera={stopCamera}
+            debugCanvasRef={debugCanvasRef}
+            trackingInfo={trackingInfo}
+            calibrationModel={calibrationModel}
+            onCalibrationModelChange={handleCalibrationModelChange}
+            cursorControlMode={cursorControlMode}
+            onCursorControlModeChange={handleCursorControlModeChange}
+            sensorFusionEnabled={sensorFusionEnabled}
+            onToggleSensorFusion={handleToggleSensorFusion}
+            ivtStabilizationEnabled={ivtStabilizationEnabled}
+            onToggleIvtStabilization={handleToggleIvtStabilization}
+            verticalGainMultiplier={verticalGainMultiplier}
+            onVerticalGainChange={handleVerticalGainChange}
+            onOpenPaperModal={() => setIsPaperModalOpen(true)}
+            onOpenVoiceCloningModal={() => setIsVoiceCloningModalOpen(true)}
+            currentLanguage={currentLanguage}
+          />
+        </div>
+      )}
 
-      {/* CAMERA DISCONNECTED PROMPT */}
+      {/* COMPACT CAMERA DISCONNECTED PROMPT (Gaze-targetable via data-dwell-id) */}
       {!cameraActive && !isOnboardingOpen && (
-        <div className="mx-3 sm:mx-6 mt-2 sm:mt-3 px-4 py-3 bg-[var(--bg-surface)] border border-[var(--border-hairline)] rounded-xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-hairline)] flex items-center justify-center text-[var(--accent-primary)] shrink-0">
-              <Camera className="w-4 h-4" />
+        <div className="mx-2 sm:mx-6 mt-1 sm:mt-1.5 px-2.5 py-1.5 sm:px-4 sm:py-2 bg-[var(--bg-surface)] border border-[var(--border-hairline)] rounded-xl flex items-center justify-between gap-2 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg bg-[var(--bg-elevated)] border border-[var(--border-hairline)] flex items-center justify-center text-[var(--accent-primary)] shrink-0">
+              <Camera className="w-3.5 h-3.5" />
             </div>
-            <div className="text-[11px] sm:text-xs text-[var(--text-secondary)]">
-              <strong className="text-[var(--text-primary)] block text-xs sm:text-sm font-semibold">
+            <div className="text-[11px] sm:text-xs text-[var(--text-secondary)] truncate">
+              <strong className="text-[var(--text-primary)] font-semibold mr-1.5">
                 {translations[currentLanguage].cameraPrompt.title}
               </strong>
-              {translations[currentLanguage].cameraPrompt.description}
+              <span className="hidden md:inline">{translations[currentLanguage].cameraPrompt.description}</span>
             </div>
           </div>
           <button
+            type="button"
+            data-dwell-id="btn-start-camera"
             onClick={startCamera}
-            className="w-full sm:w-auto justify-center px-4 py-2 bg-[var(--accent-primary)] text-[var(--accent-contrast)] font-semibold rounded-lg text-xs flex items-center gap-2 shrink-0"
+            className={`px-2.5 sm:px-3.5 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-semibold flex items-center gap-1.5 shrink-0 transition-colors ${
+              hoveredDwellId === 'btn-start-camera'
+                ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)] ring-2 ring-[var(--accent-primary)]'
+                : 'bg-[var(--accent-primary)] text-[var(--accent-contrast)]'
+            }`}
           >
             <Camera className="w-3.5 h-3.5" />
-            {translations[currentLanguage].cameraPrompt.button}
+            <span>{translations[currentLanguage].cameraPrompt.button}</span>
           </button>
         </div>
       )}
 
       {cameraError && (
-        <div className="mx-3 sm:mx-6 mt-2 sm:mt-3 bg-[var(--bg-surface)] border border-[var(--accent-amber)] text-[var(--accent-amber)] px-4 py-2 rounded-xl text-xs flex items-center justify-between">
-          <span>{cameraError}</span>
-          <button onClick={() => setCameraError(null)} className="underline">Cerrar</button>
+        <div className="mx-2 sm:mx-6 mt-1 bg-[var(--bg-surface)] border border-[var(--accent-amber)] text-[var(--accent-amber)] px-3 py-1.5 rounded-xl text-xs flex items-center justify-between shrink-0">
+          <span className="truncate">{cameraError}</span>
+          <button
+            type="button"
+            data-dwell-id="btn-dismiss-camera-error"
+            onClick={() => setCameraError(null)}
+            className="underline ml-2 shrink-0"
+          >
+            Cerrar
+          </button>
         </div>
       )}
 
-      {/* MAIN VIEWPORT */}
-      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-3 sm:py-5 flex flex-col gap-3 sm:gap-4">
+      {/* MAIN SINGLE-SCREEN VIEWPORT (100% fits inside 100dvh without vertical page scroll) */}
+      <main className="flex-1 min-h-0 max-w-7xl w-full mx-auto px-2 sm:px-6 py-1.5 sm:py-3 flex flex-col gap-1.5 sm:gap-3 overflow-hidden">
         {/* RECENT VOCALIZATION BANNER */}
         <RecentSpeechBanner
           lastSpokenText={lastSpokenText}
@@ -2008,10 +2050,7 @@ export default function App() {
           />
         )}
       </main>
-
-      <footer className="border-t border-[var(--border-hairline)] py-2.5 px-3 sm:px-6 text-center text-[10px] sm:text-[11px] text-[var(--text-muted)] font-mono tracking-wide">
-        Instrumentación Oftálmica de Comunicación Aumentativa · Espectro de Baja Fatiga Retiniana · 100% Procesamiento Local
-      </footer>
     </div>
   );
 }
+

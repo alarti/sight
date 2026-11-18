@@ -60,29 +60,26 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
   const isEn = currentLanguage === 'en';
 
   return (
-    <header className="flex items-center justify-between gap-3 sm:gap-6 px-3 sm:px-6 py-2 sm:py-3 border-b border-[var(--border-hairline)] bg-[var(--bg-surface)] sticky top-0 z-50">
-      {/* Zone 1: Clinical Instrument Wordmark */}
-      <div className="flex items-center gap-2.5 shrink-0">
-        <div className="w-8 h-8 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] flex items-center justify-center shrink-0">
-          <Eye className="w-4 h-4 text-[var(--accent-primary)]" />
-        </div>
-        <div className="leading-tight">
-          <span className="text-xs sm:text-sm font-semibold tracking-tight text-[var(--text-primary)] whitespace-nowrap block">
+    <header className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-1.5 sm:gap-2 px-2 sm:px-5 py-1.5 sm:py-2 border-b border-[var(--border-hairline)] bg-[var(--bg-surface)] shrink-0 z-50">
+      {/* Top / Left Row: Brand + Primary Workspace Tabs + Ocular Theme + Language */}
+      <div className="flex items-center justify-between lg:justify-start gap-1.5 sm:gap-3 flex-wrap">
+        {/* Clinical Instrument Wordmark */}
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+          <div className="w-6 h-6 sm:w-7 sm:h-7 rounded-lg border border-[var(--border-hairline)] bg-[var(--bg-elevated)] flex items-center justify-center shrink-0">
+            <Eye className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
+          </div>
+          <span className="text-xs sm:text-sm font-semibold tracking-tight text-[var(--text-primary)] whitespace-nowrap hidden sm:inline">
             {t.appTitle}
           </span>
-          <span className="text-[11px] text-[var(--text-muted)] hidden xl:block whitespace-nowrap">
-            {t.appSubtitle}
-          </span>
         </div>
-      </div>
 
-      {/* Zone 2: Primary Workspace Switcher + Ocular Spectrum Selector */}
-      <div className="flex items-center gap-2 sm:gap-4 flex-wrap justify-center">
-        <nav className="flex items-center p-0.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-hairline)]">
+        {/* Primary Workspace Switcher */}
+        <nav className="flex items-center p-0.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-hairline)] shrink-0">
           <button
+            type="button"
             data-dwell-id="tab-eye-comm"
             onClick={() => setActiveTab('eye-comm')}
-            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+            className={`px-2 sm:px-3 py-1 rounded-md text-[11px] sm:text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
               activeTab === 'eye-comm'
                 ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)] font-semibold'
                 : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
@@ -91,9 +88,10 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
             {t.tabs.quickBoard}
           </button>
           <button
+            type="button"
             data-dwell-id="tab-virtual-keyboard"
             onClick={() => setActiveTab('virtual-keyboard')}
-            className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
+            className={`px-2 sm:px-3 py-1 rounded-md text-[11px] sm:text-xs font-medium transition-colors whitespace-nowrap shrink-0 ${
               activeTab === 'virtual-keyboard'
                 ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)] font-semibold'
                 : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
@@ -103,10 +101,10 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
           </button>
         </nav>
 
-        {/* Ophthalmic Low-Fatigue Light Spectrum Switcher */}
+        {/* Ophthalmic Low-Fatigue Light Spectrum Switcher (Always visible & gaze-targetable) */}
         {onChangeOcularTheme && (
           <div
-            className="hidden md:flex items-center p-0.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-hairline)]"
+            className="flex items-center p-0.5 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-hairline)] shrink-0"
             role="group"
             aria-label={isEn ? 'Ophthalmic Color Spectrum' : 'Espectro de Luz Ocular'}
           >
@@ -114,7 +112,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
               type="button"
               data-dwell-id="theme-warm-obsidian"
               onClick={() => onChangeOcularTheme('warm-obsidian')}
-              className={`px-2.5 py-1 rounded-md text-[11px] font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 ${
+              className={`px-1.5 sm:px-2 py-1 rounded-md text-[10px] sm:text-[11px] font-medium flex items-center gap-1 transition-colors whitespace-nowrap shrink-0 ${
                 ocularTheme === 'warm-obsidian'
                   ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-active)]'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
@@ -122,13 +120,13 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
               title={isEn ? 'Warm Mineral Slate (Low Blue Light)' : 'Piedra Cálida (Baja Emisión Azul)'}
             >
               <Moon className="w-3 h-3 text-[var(--accent-primary)]" />
-              <span>{isEn ? 'Mineral' : 'Piedra'}</span>
+              <span className="hidden xs:inline sm:inline">{isEn ? 'Mineral' : 'Piedra'}</span>
             </button>
             <button
               type="button"
               data-dwell-id="theme-eink-parchment"
               onClick={() => onChangeOcularTheme('eink-parchment')}
-              className={`px-2.5 py-1 rounded-md text-[11px] font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 ${
+              className={`px-1.5 sm:px-2 py-1 rounded-md text-[10px] sm:text-[11px] font-medium flex items-center gap-1 transition-colors whitespace-nowrap shrink-0 ${
                 ocularTheme === 'eink-parchment'
                   ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-active)]'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
@@ -136,13 +134,13 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
               title={isEn ? 'Warm E-Ink Parchment (Zero Glare Daylight)' : 'Papiro E-Ink Cálido (Lectura Diurna sin Reflejos)'}
             >
               <Sun className="w-3 h-3 text-[var(--accent-amber)]" />
-              <span>{isEn ? 'E-Ink' : 'Papiro'}</span>
+              <span className="hidden xs:inline sm:inline">{isEn ? 'E-Ink' : 'Papiro'}</span>
             </button>
             <button
               type="button"
               data-dwell-id="theme-scotopic-amber"
               onClick={() => onChangeOcularTheme('scotopic-amber')}
-              className={`px-2.5 py-1 rounded-md text-[11px] font-medium flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 ${
+              className={`px-1.5 sm:px-2 py-1 rounded-md text-[10px] sm:text-[11px] font-medium flex items-center gap-1 transition-colors whitespace-nowrap shrink-0 ${
                 ocularTheme === 'scotopic-amber'
                   ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] border border-[var(--border-active)]'
                   : 'text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
@@ -150,27 +148,57 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
               title={isEn ? 'Scotopic 590nm Amber (Night & Photophobia Relief)' : 'Ámbar Escotópico 590nm (Noche y Fotofobia)'}
             >
               <Sunset className="w-3 h-3 text-[var(--accent-amber)]" />
-              <span>{isEn ? 'Amber' : 'Ámbar'}</span>
+              <span className="hidden xs:inline sm:inline">{isEn ? 'Amber' : 'Ámbar'}</span>
             </button>
           </div>
         )}
+
+        {/* Language Selector (Always visible & gaze-targetable) */}
+        <div className="flex items-center bg-[var(--bg-canvas)] border border-[var(--border-hairline)] rounded-lg p-0.5 font-mono text-[10px] sm:text-[11px] shrink-0">
+          <button
+            type="button"
+            data-dwell-id="btn-lang-es"
+            onClick={() => onToggleLanguage('es')}
+            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded font-medium transition-colors whitespace-nowrap shrink-0 ${
+              currentLanguage === 'es'
+                ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] font-semibold'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+            } ${hoveredDwellId === 'btn-lang-es' ? 'ring-2 ring-[var(--accent-primary)]' : ''}`}
+            title="Español (es-ES)"
+          >
+            ES
+          </button>
+          <button
+            type="button"
+            data-dwell-id="btn-lang-en"
+            onClick={() => onToggleLanguage('en')}
+            className={`px-1.5 sm:px-2 py-0.5 sm:py-1 rounded font-medium transition-colors whitespace-nowrap shrink-0 ${
+              currentLanguage === 'en'
+                ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] font-semibold'
+                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
+            } ${hoveredDwellId === 'btn-lang-en' ? 'ring-2 ring-[var(--accent-primary)]' : ''}`}
+            title="English (en-US)"
+          >
+            EN
+          </button>
+        </div>
       </div>
 
-      {/* Zone 3: Ocular Rest Sanctuary Action & Instrument Controls */}
-      <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+      {/* Bottom / Right Row: Ocular Rest Sanctuary Action & Instrument Controls (All visible & gaze-targetable) */}
+      <div className="flex items-center justify-between sm:justify-end gap-1 sm:gap-1.5 flex-wrap">
         {/* EMERGENCY SOS QUICK BUTTON */}
         {onTriggerSos && (
           <button
             type="button"
             data-dwell-id="btn-header-sos"
             onClick={onTriggerSos}
-            className={`px-2.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors border border-[var(--accent-urgent)] bg-[var(--bg-canvas)] text-[var(--accent-urgent)] hover:bg-[var(--accent-urgent)] hover:text-white whitespace-nowrap shrink-0 ${
+            className={`px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-semibold flex items-center gap-1 transition-colors border border-[var(--accent-urgent)] bg-[var(--bg-canvas)] text-[var(--accent-urgent)] hover:bg-[var(--accent-urgent)] hover:text-white whitespace-nowrap shrink-0 ${
               hoveredDwellId === 'btn-header-sos' ? 'ring-2 ring-[var(--accent-urgent)]' : ''
             }`}
             title={isEn ? 'Emergency SOS Caregiver Siren' : 'Alarma Acústica SOS al Cuidador'}
           >
             <BellRing className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">SOS</span>
+            <span>SOS</span>
           </button>
         )}
 
@@ -180,7 +208,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
             type="button"
             data-dwell-id="btn-ocular-rest-toggle"
             onClick={onToggleOcularRestMode}
-            className={`px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors border whitespace-nowrap shrink-0 ${
+            className={`px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-medium flex items-center gap-1 transition-colors border whitespace-nowrap shrink-0 ${
               isOcularRestMode
                 ? 'bg-[var(--accent-primary)] text-[var(--accent-contrast)] border-[var(--border-active)] font-semibold'
                 : 'bg-[var(--bg-canvas)] text-[var(--text-primary)] border-[var(--border-active)] hover:bg-[var(--bg-elevated)]'
@@ -192,35 +220,9 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
             }
           >
             <Moon className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
-            <span>{isEn ? 'Rest Eyes' : 'Descanso Ocular'}</span>
+            <span className="hidden xs:inline sm:inline">{isEn ? 'Rest' : 'Reposo'}</span>
           </button>
         )}
-
-        {/* LANGUAGE SELECTOR */}
-        <div className="hidden sm:flex items-center bg-[var(--bg-canvas)] border border-[var(--border-hairline)] rounded-lg p-0.5 font-mono text-[11px]">
-          <button
-            onClick={() => onToggleLanguage('es')}
-            className={`px-2 py-1 rounded text-[11px] font-medium transition-colors whitespace-nowrap shrink-0 ${
-              currentLanguage === 'es'
-                ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] font-semibold'
-                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-            }`}
-            title="Español (es-ES)"
-          >
-            ES
-          </button>
-          <button
-            onClick={() => onToggleLanguage('en')}
-            className={`px-2 py-1 rounded text-[11px] font-medium transition-colors whitespace-nowrap shrink-0 ${
-              currentLanguage === 'en'
-                ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] font-semibold'
-                : 'text-[var(--text-muted)] hover:text-[var(--text-primary)]'
-            }`}
-            title="English (en-US)"
-          >
-            EN
-          </button>
-        </div>
 
         {/* CLINICAL PRO / SaMD SUITE BUTTON */}
         {onOpenClinicalModal && (
@@ -228,7 +230,7 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
             type="button"
             data-dwell-id="btn-clinical-pro-modal"
             onClick={onOpenClinicalModal}
-            className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors bg-[var(--bg-canvas)] border border-[var(--border-hairline)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 ${
+            className={`px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-medium flex items-center gap-1 transition-colors bg-[var(--bg-canvas)] border border-[var(--border-hairline)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 ${
               hoveredDwellId === 'btn-clinical-pro-modal' ? 'ring-2 ring-[var(--accent-primary)]' : ''
             }`}
             title={isEn ? 'Clinical Pro SaMD Telemetry, HL7 FHIR & AES-256 Vault' : 'Suite Clínica SaMD, HL7 FHIR y Bóveda AES-256'}
@@ -240,9 +242,10 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
 
         {/* VOICE CLONING / IMITATION BUTTON */}
         <button
+          type="button"
           data-dwell-id="btn-voice-cloning-modal"
           onClick={onOpenVoiceCloningModal}
-          className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors border whitespace-nowrap shrink-0 ${
+          className={`px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-medium flex items-center gap-1 transition-colors border whitespace-nowrap shrink-0 ${
             isVoiceCloned
               ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] border-[var(--border-active)]'
               : 'bg-[var(--bg-canvas)] text-[var(--text-secondary)] border-[var(--border-hairline)] hover:text-[var(--text-primary)]'
@@ -255,9 +258,10 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
 
         {/* SCIENTIFIC PAPER MODAL BUTTON */}
         <button
+          type="button"
           data-dwell-id="btn-paper-modal"
           onClick={onOpenPaperModal}
-          className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors bg-[var(--bg-canvas)] border border-[var(--border-hairline)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 ${
+          className={`px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-medium flex items-center gap-1 transition-colors bg-[var(--bg-canvas)] border border-[var(--border-hairline)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 ${
             hoveredDwellId === 'btn-paper-modal' ? 'ring-2 ring-[var(--accent-primary)]' : ''
           }`}
           title={t.header.paperTitle}
@@ -268,23 +272,25 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
 
         {/* PROFILES BUTTON */}
         <button
+          type="button"
           data-dwell-id="btn-profiles-modal"
           onClick={onOpenProfilesModal}
-          className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors bg-[var(--bg-canvas)] border border-[var(--border-hairline)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 ${
+          className={`px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-medium flex items-center gap-1 transition-colors bg-[var(--bg-canvas)] border border-[var(--border-hairline)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] whitespace-nowrap shrink-0 ${
             hoveredDwellId === 'btn-profiles-modal' ? 'ring-2 ring-[var(--accent-primary)]' : ''
           }`}
           title={t.header.profiles}
         >
           <User className="w-3.5 h-3.5 text-[var(--accent-primary)]" />
-          <span className="font-semibold text-[var(--text-primary)] max-w-[76px] truncate">{activeProfile.name}</span>
+          <span className="font-semibold text-[var(--text-primary)] max-w-[68px] truncate">{activeProfile.name}</span>
         </button>
 
         {/* LIVE MANUAL AIMING & ML CALIBRATION TOGGLE */}
         {onToggleManualAimingMode && (
           <button
+            type="button"
             data-dwell-id="btn-manual-aiming-mode"
             onClick={onToggleManualAimingMode}
-            className={`px-2.5 py-1.5 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors border whitespace-nowrap shrink-0 ${
+            className={`px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-medium flex items-center gap-1 transition-colors border whitespace-nowrap shrink-0 ${
               isManualAimingMode
                 ? 'bg-[var(--accent-amber)] text-[var(--accent-contrast)] border-[var(--accent-amber)] font-semibold'
                 : 'bg-[var(--bg-canvas)] border-[var(--border-hairline)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
@@ -304,9 +310,10 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
 
         {/* ADVANCED SETTINGS PANEL TOGGLE */}
         <button
+          type="button"
           data-dwell-id="btn-advanced-panel"
           onClick={() => setIsAdvancedPanelOpen(prev => !prev)}
-          className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors border whitespace-nowrap shrink-0 ${
+          className={`px-2 sm:px-2.5 py-1 sm:py-1.5 rounded-lg text-[11px] sm:text-xs font-medium transition-colors border whitespace-nowrap shrink-0 ${
             isAdvancedPanelOpen
               ? 'bg-[var(--bg-elevated)] text-[var(--text-primary)] border-[var(--border-active)] font-semibold'
               : 'bg-[var(--bg-canvas)] border-[var(--border-hairline)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
@@ -317,14 +324,15 @@ export const HeaderBar: React.FC<HeaderBarProps> = ({
 
         {/* AUDIO MUTE TOGGLE */}
         <button
+          type="button"
           data-dwell-id="btn-audio-toggle"
           onClick={() => setIsAudioEnabled(prev => !prev)}
-          className={`p-2 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-hairline)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors shrink-0 ${
+          className={`p-1.5 sm:p-2 rounded-lg bg-[var(--bg-canvas)] border border-[var(--border-hairline)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors shrink-0 ${
             hoveredDwellId === 'btn-audio-toggle' ? 'ring-2 ring-[var(--accent-primary)]' : ''
           }`}
           title={isAudioEnabled ? t.header.muteAudio : t.header.unmuteAudio}
         >
-          {isAudioEnabled ? <Volume2 className="w-4 h-4 text-[var(--accent-primary)]" /> : <VolumeX className="w-4 h-4 text-[var(--text-muted)]" />}
+          {isAudioEnabled ? <Volume2 className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[var(--accent-primary)]" /> : <VolumeX className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-[var(--text-muted)]" />}
         </button>
       </div>
     </header>

@@ -228,11 +228,12 @@ export function compressToWeightedInducingCentroids(
 }
 
 /**
- * Estimates orthogonal 3D head-pose parallax factors (yawFactorX, pitchFactorY)
- * only when head pose varies independently from eye gaze (R^2 <= 0.55) so natural
- * corner glances never sacrifice edge travel.
+ * Estimates orthogonal 3D head-pose parallax sensitivity gains (yawFactorX, pitchFactorY).
+ * Applies an orthogonality gate based on the coefficient of determination (R^2 <= 0.65)
+ * between head rotation and eye excursion so that natural head-eye coupling during corner
+ * glances never attenuates peripheral cursor reach.
  */
-function estimateOrthogonalPoseSlopes(
+function estimateOrthogonalHeadPoseGains(
   centroids: WeightedCalibrationCentroid[]
 ): { yawFactorX: number; pitchFactorY: number } {
   if (centroids.length < 5) {
@@ -349,8 +350,8 @@ function evalNormalizedHomography(
 }
 
 /**
- * Validates that a normalized 3x3 homography has positive orientation (no flip / horizon singularity)
- * across the entire calibrated quadrant box expanded outward by 0.65 standard units.
+ * Validates that a normalized 3x3 homography preserves orientation (positive Jacobian determinant
+ * and no perspective horizon singularity) across the calibrated domain expanded by 0.65 standard units.
  */
 function isHomographyWellConditioned(
   H: number[][],
@@ -380,7 +381,8 @@ function isHomographyWellConditioned(
 }
 
 /**
- * Fits a precision-weighted Hartley-normalized 3x3 Projective Homography from (u, v) -> (tX, tY).
+ * Fits a precision-weighted Hartley-normalized 3x3 Projective Homography from (u, v) -> (tX, tY)
+ * via regularized Direct Linear Transformation (DLT).
  */
 function solveNormalizedHomography(
   pointsUV: Array<{ u: number; v: number }>,
@@ -421,7 +423,7 @@ function solveNormalizedHomography(
  * M-QPM (Mahalanobis-Whitened Exact Quadrant Positioning Matrix):
  * Adaptive multi-regime solver that calculates the exact pupil-to-screen quadrant transformation
  * for 1, 2, 3, 4, or N trained points with zero residual error at calibrated coordinates:
- * - N = 1: Exact translation anchor + physiological aspect slope
+ * - N = 1: Exact translation anchor + physiological aspect scaling gain
  * - N = 2: Exact anisotropic/similarity alignment through both points
  * - N = 3: Exact 6-DOF Affine matrix passing through all 3 points
  * - N = 4: Exact Hartley-Normalized Planar Projective Homography capturing keystone eye geometry
@@ -438,8 +440,8 @@ export function fitQuadrantPupilMatrix(
   const screenW = typeof window !== 'undefined' ? window.innerWidth : 1280;
   const screenH = typeof window !== 'undefined' ? window.innerHeight : 720;
 
-  // Estimate orthogonal head pose slopes when sufficient samples exist
-  const { yawFactorX, pitchFactorY } = estimateOrthogonalPoseSlopes(rawCentroids);
+  // Estimate orthogonal head-pose sensitivity gains when sufficient samples exist
+  const { yawFactorX, pitchFactorY } = estimateOrthogonalHeadPoseGains(rawCentroids);
 
   let totalW = 0;
   let meanX = 0, meanY = 0;
@@ -906,7 +908,7 @@ export function fitThinPlateSpline(
   const N = centroids.length;
   if (N < 3) return null;
 
-  const { yawFactorX, pitchFactorY } = estimateOrthogonalPoseSlopes(centroids);
+  const { yawFactorX, pitchFactorY } = estimateOrthogonalHeadPoseGains(centroids);
 
   let totalW = 0, meanX = 0, meanY = 0;
   for (const s of centroids) {
@@ -1282,7 +1284,7 @@ export function fitProjectiveHomography(samples: CalibrationSample[]): Projectiv
     [HRaw[2][0] / normScale, HRaw[2][1] / normScale, 1.0],
   ];
 
-  const { yawFactorX, pitchFactorY } = estimateOrthogonalPoseSlopes(centroids);
+  const { yawFactorX, pitchFactorY } = estimateOrthogonalHeadPoseGains(centroids);
 
   const projModel: ProjectiveModel = {
     H,
