@@ -18,9 +18,11 @@ import {
 } from './bayesianTargetDecoder.ts';
 import {
   evaluateLissajousPursuitTarget,
+  evaluateRasterScanPursuitTarget,
   calibrateFromSmoothPursuit,
   PursuitStreamFrame,
 } from './smoothPursuitCalibration.ts';
+import { evaluateCalibratedGaze } from './calibration.ts';
 import {
   OcularTrackballController,
   TwoStageLoupeController,
@@ -201,6 +203,77 @@ describe('Next-Gen Gaze Detection & Cursor Positioning Suite', () => {
       expect(result!.optimalLagMs).toBeLessThanOrEqual(160);
       expect(result!.pearsonR2).toBeGreaterThan(0.95);
       expect(result!.samples.length).toBeGreaterThanOrEqual(12);
+    });
+
+    it('sweeps 5 Boustrophedon horizontal lines from Top-Left and solves 3D head-pose coupling (Yaw, Pitch, Roll)', () => {
+      const startState = evaluateRasterScanPursuitTarget(0, 5);
+      expect(startState.xPct).toBeCloseTo(0.07, 2);
+      expect(startState.yPct).toBeCloseTo(0.08, 2);
+      expect(startState.lineIndex).toBe(0);
+      expect(startState.direction).toBe('ltr');
+      expect(startState.phase).toBe('raster-scan');
+
+      const gimbalState = evaluateRasterScanPursuitTarget(0.95, 5);
+      expect(gimbalState.xPct).toBeCloseTo(0.50, 2);
+      expect(gimbalState.yPct).toBeCloseTo(0.50, 2);
+      expect(gimbalState.phase).toBe('head-gimbal');
+
+      const screenW = 1280;
+      const screenH = 720;
+      const durationMs = 12500;
+      const stream: PursuitStreamFrame[] = [];
+
+      // True synthetic 3D head-pose pupil coupling gains
+      const trueJxYaw = 0.08;
+      const trueJyPitch = 0.06;
+
+      for (let t = 0; t <= durationMs; t += 40) {
+        const p = t / durationMs;
+        const tgt = evaluateRasterScanPursuitTarget(p, 5);
+
+        // Simulate 3D head movement (especially during the 2-second central gimbal phase)
+        const yaw = tgt.phase === 'head-gimbal' ? 0.15 * Math.sin(t * 0.008) : 0.04 * Math.sin(t * 0.002);
+        const pitch = tgt.phase === 'head-gimbal' ? 0.14 * Math.cos(t * 0.007) : 0.03 * Math.cos(t * 0.0025);
+        const rollDeg = tgt.phase === 'head-gimbal' ? 4.0 * Math.sin(t * 0.005) : 1.0 * Math.sin(t * 0.001);
+
+        const basePupilX = 0.5 + (tgt.xPct - 0.5) * 0.40;
+        const basePupilY = 0.5 + (tgt.yPct - 0.5) * 0.34;
+
+        stream.push({
+          tMs: t,
+          targetX: tgt.xPct * screenW,
+          targetY: tgt.yPct * screenH,
+          rawPupilX: basePupilX + trueJxYaw * yaw,
+          rawPupilY: basePupilY + trueJyPitch * pitch,
+          headYaw: yaw,
+          headPitch: pitch,
+          headRoll: rollDeg,
+        });
+      }
+
+      const result = calibrateFromSmoothPursuit(stream, 'quadrant-matrix', 60, 20)!;
+      expect(result).not.toBeNull();
+      expect(result.rasterCellsCount).toBeGreaterThanOrEqual(25);
+      expect(result.headCoupling3D.jacobianX[0]).toBeGreaterThan(0.03);
+      expect(result.headCoupling3D.jacobianY[1]).toBeGreaterThan(0.02);
+
+      // Evaluate at center (0.50 * 1280 = 640, 0.50 * 720 = 360) under a +0.12 head yaw & -0.10 head pitch excursion:
+      // The 3D head-coupled matrix must cancel the head-induced pupil shift and keep cursor near (640, 360)
+      const testYaw = 0.12;
+      const testPitch = -0.10;
+      const perturbedPupilX = 0.5 + trueJxYaw * testYaw;
+      const perturbedPupilY = 0.5 + trueJyPitch * testPitch;
+
+      const predWith3D = evaluateCalibratedGaze(
+        perturbedPupilX,
+        perturbedPupilY,
+        testYaw,
+        testPitch,
+        result.matrix,
+        'quadrant-matrix',
+        0
+      )!;
+      expect(Math.hypot(predWith3D.x - 640, predWith3D.y - 360)).toBeLessThan(18);
     });
   });
 

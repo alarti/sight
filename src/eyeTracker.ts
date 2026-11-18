@@ -613,10 +613,19 @@ export class BrowserAIEyeTracker {
     headYaw: number,
     headPitch: number,
     screenW: number,
-    screenH: number
+    screenH: number,
+    headRoll: number = 0
   ): { x: number; y: number } {
     if (this.calibrationCoeffs) {
-      const pred = evaluateCalibratedGaze(rawX, rawY, headYaw, headPitch, this.calibrationCoeffs, this.calibrationAlgorithm);
+      const pred = evaluateCalibratedGaze(
+        rawX,
+        rawY,
+        headYaw,
+        headPitch,
+        this.calibrationCoeffs,
+        this.calibrationAlgorithm,
+        headRoll
+      );
       if (pred) {
         return {
           x: Math.min(screenW - 5, Math.max(5, pred.x - this.baselineOffsetX)),
@@ -1004,7 +1013,8 @@ export class BrowserAIEyeTracker {
         smoothYaw,
         smoothPitch,
         screenW,
-        screenH
+        screenH,
+        headPose.rollDeg
       );
 
       // 5. 2D State-Space Kalman Filter with Continuous Mahalanobis Saccadic Innovation Gate

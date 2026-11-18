@@ -3,6 +3,24 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+/**
+ * 3D Head-Pose Differential Coupling Tensor (Yaw \psi, Pitch \theta, Roll \phi):
+ * Models the pupil-space displacement (\Delta x, \Delta y) induced by 3D head rotations
+ * relative to the user's canonical calibration posture (refYaw, refPitch, refRollDeg),
+ * including in-plane ocular counter-roll de-rotation.
+ */
+export interface HeadPoseCoupling3D {
+  refYaw: number;
+  refPitch: number;
+  refRollDeg: number;
+  /** [dPupilX/dYaw, dPupilX/dPitch, dPupilX/dRollNorm] */
+  jacobianX: [number, number, number];
+  /** [dPupilY/dYaw, dPupilY/dPitch, dPupilY/dRollNorm] */
+  jacobianY: [number, number, number];
+  /** In-plane ocular counter-roll de-rotation gain */
+  ocularCounterRollGain?: number;
+}
+
 export interface CalibrationSample {
   targetX: number;
   targetY: number;
@@ -11,6 +29,7 @@ export interface CalibrationSample {
   headYaw?: number;
   headPitch?: number;
   headRoll?: number;
+  headCoupling3D?: HeadPoseCoupling3D;
 }
 
 export interface FormantFrequencies {
@@ -118,6 +137,7 @@ export interface QuadrantMatrixSnapshot {
   hullMaxU: number;
   hullMinV: number;
   hullMaxV: number;
+  headCoupling3D?: HeadPoseCoupling3D;
   rmsePx?: number;
 }
 

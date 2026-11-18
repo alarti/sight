@@ -9,9 +9,10 @@ import { UserProfile, CalibrationSample } from '../profileManager.ts';
 import { EyeTrackingData } from '../eyeTracker.ts';
 import { fitCalibrationModel, aggregateFixationSamples, CalibrationMatrixCoeffs } from '../utils/calibration.ts';
 import {
-  evaluateLissajousPursuitTarget,
+  evaluateRasterScanPursuitTarget,
   calibrateFromSmoothPursuit,
   PursuitStreamFrame,
+  RasterPursuitTargetState,
 } from '../utils/smoothPursuitCalibration.ts';
 import { playPointChime, stopAllSounds } from '../utils/audio.ts';
 import { Language, translations } from '../i18n/translations.ts';
@@ -26,7 +27,7 @@ interface GridCalibrationWizardProps {
   currentLanguage?: Language;
 }
 
-type CalibrationPreset = '4-corners' | '5-quadrant' | '9-grid' | 'smooth-pursuit';
+type CalibrationPreset = 'smooth-pursuit' | '9-grid' | '5-quadrant' | '4-corners';
 
 // 9 Points located at the furthest reachable perimeter of the screen
 const GRID_POINTS_DATA = [
@@ -39,6 +40,14 @@ const GRID_POINTS_DATA = [
   { id: 6, xPct: 0.07, yPct: 0.92, labelEs: 'Esquina Inferior Izquierda', labelEn: 'Bottom-Left Corner' },
   { id: 7, xPct: 0.50, yPct: 0.92, labelEs: 'Borde Inferior Centro', labelEn: 'Bottom Center Edge' },
   { id: 8, xPct: 0.93, yPct: 0.92, labelEs: 'Esquina Inferior Derecha', labelEn: 'Bottom-Right Corner' },
+];
+
+const RASTER_SCAN_LINES = [
+  { row: 0, yPct: 0.08, dir: 'ltr' as const, labelEs: 'Línea 1 (Izq → Der)', labelEn: 'Line 1 (Left → Right)' },
+  { row: 1, yPct: 0.29, dir: 'rtl' as const, labelEs: 'Línea 2 (Der → Izq)', labelEn: 'Line 2 (Right → Left)' },
+  { row: 2, yPct: 0.50, dir: 'ltr' as const, labelEs: 'Línea 3 · Centro (Izq → Der)', labelEn: 'Line 3 · Center (Left → Right)' },
+  { row: 3, yPct: 0.71, dir: 'rtl' as const, labelEs: 'Línea 4 (Der → Izq)', labelEn: 'Line 4 (Right → Left)' },
+  { row: 4, yPct: 0.92, dir: 'ltr' as const, labelEs: 'Línea 5 · Inferior (Izq → Der)', labelEn: 'Line 5 · Bottom (Left → Right)' },
 ];
 
 const PRESET_INDICES: Record<Exclude<CalibrationPreset, 'smooth-pursuit'>, number[]> = {
@@ -56,12 +65,15 @@ export const GridCalibrationWizard: React.FC<GridCalibrationWizardProps> = ({
   onSpeak,
   currentLanguage = 'es',
 }) => {
-  const [presetMode, setPresetMode] = useState<CalibrationPreset>('9-grid');
+  // Default to Continuous Boustrophedon Line-Scan + 3D Head-Pose Coupled Calibration
+  const [presetMode, setPresetMode] = useState<CalibrationPreset>('smooth-pursuit');
   const [countdown, setCountdown] = useState<number | null>(3);
   const [currentPointIndex, setCurrentPointIndex] = useState<number>(0);
   const [pointProgress, setPointProgress] = useState<number>(0);
-  const [pursuitPos, setPursuitPos] = useState<{ xPct: number; yPct: number }>({ xPct: 0.5, yPct: 0.5 });
-  const [pursuitMetrics, setPursuitMetrics] = useState<{ lagMs: number; r2: number } | null>(null);
+  const [pursuitState, setPursuitState] = useState<RasterPursuitTargetState>(() =>
+    evaluateRasterScanPursuitTarget(0, 5)
+  );
+  const [pursuitMetrics, setPursuitMetrics] = useState<{ lagMs: number; r2: number; cells: number } | null>(null);
   const [calibrationDone, setCalibrationDone] = useState<boolean>(false);
   const [isPaused, setIsPaused] = useState<boolean>(false);
   const [waitingForValidEye, setWaitingForValidEye] = useState<boolean>(false);
@@ -73,7 +85,14 @@ export const GridCalibrationWizard: React.FC<GridCalibrationWizardProps> = ({
 
   const getPointLabel = (idx: number) => {
     if (isPursuitMode) {
-      return currentLanguage === 'en' ? 'Follow the gliding orb continuously' : 'Siga el punto orbital suavemente con la vista';
+      if (pursuitState.phase === 'head-gimbal') {
+        return currentLanguage === 'en'
+          ? '3D Head Calibration: Keep eyes on center & gently nod/turn head'
+          : 'Ajuste 3D de Cabeza: Fije la vista en el centro y mueva suave la cabeza';
+      }
+      const lineIdx = Math.max(0, Math.min(4, pursuitState.lineIndex));
+      const lineInfo = RASTER_SCAN_LINES[lineIdx];
+      return currentLanguage === 'en' ? lineInfo.labelEn : lineInfo.labelEs;
     }
     const pt = activePoints[idx];
     if (!pt) return '';
@@ -87,6 +106,8 @@ export const GridCalibrationWizard: React.FC<GridCalibrationWizardProps> = ({
   const pointSamplesRef = useRef<Array<{ rawX: number; rawY: number; yaw: number; pitch: number; roll: number }>>([]);
   const collectedSamplesRef = useRef<CalibrationSample[]>([]);
   const pursuitStreamRef = useRef<PursuitStreamFrame[]>([]);
+  const announcedGimbalRef = useRef<boolean>(false);
+  const lastLineChimeRef = useRef<number>(0);
   const stageRef = useRef<HTMLDivElement>(null);
 
   const restartCalibrationSequence = (nextPreset?: CalibrationPreset) => {
@@ -95,8 +116,10 @@ export const GridCalibrationWizard: React.FC<GridCalibrationWizardProps> = ({
     setCurrentPointIndex(0);
     collectedSamplesRef.current = [];
     pursuitStreamRef.current = [];
+    announcedGimbalRef.current = false;
+    lastLineChimeRef.current = 0;
     setPointProgress(0);
-    setPursuitPos({ xPct: 0.5, yPct: 0.5 });
+    setPursuitState(evaluateRasterScanPursuitTarget(0, 5));
     setPursuitMetrics(null);
     setCalibrationDone(false);
     setIsPaused(false);
@@ -109,13 +132,13 @@ export const GridCalibrationWizard: React.FC<GridCalibrationWizardProps> = ({
     if (isOpen) {
       restartCalibrationSequence();
       const introMsg = currentLanguage === 'en'
-        ? `Starting quadrant pupil calibration for ${activeProfile.name}. Fixate your gaze on the active target.`
-        : `Iniciando ajuste matricial de pupilas para ${activeProfile.name}. Fije la mirada en el marcador activo.`;
+        ? `Starting continuous line-scan and 3D head calibration for ${activeProfile.name}. Follow the cursor from top-left line by line.`
+        : `Iniciando barrido continuo por líneas y matriz 3D de cabeza para ${activeProfile.name}. Siga el cursor desde arriba a la izquierda línea a línea.`;
       onSpeak(introMsg);
     }
   }, [isOpen, activeProfile.name, currentLanguage]);
 
-  // Initial 3-second countdown before point 0 / orbital start
+  // Initial 3-second countdown before point 0 / raster sweep start
   useEffect(() => {
     if (!isOpen || countdown === null || countdown <= 0) return;
 
@@ -131,15 +154,18 @@ export const GridCalibrationWizard: React.FC<GridCalibrationWizardProps> = ({
     return () => clearTimeout(timer);
   }, [isOpen, countdown, presetMode]);
 
-  // Smooth-Pursuit Continuous Orbital Calibration Loop ("OrbitoGaze")
+  // Continuous Boustrophedon Line-Scan + 2s 3D Head-Pose Gimbal Calibration Loop
   useEffect(() => {
     if (!isOpen || !isPursuitMode || countdown !== null || calibrationDone || isPaused) return;
 
     let animId: number;
     let activeElapsedMs = 0;
     let lastFrameTime = performance.now();
-    const ORBIT_DURATION_MS = 9200;
+    // 10.5s for 5-line Boustrophedon raster scan + 2.0s for central 3D head-gimbal calibration = 12.5s
+    const ORBIT_DURATION_MS = 12500;
     pursuitStreamRef.current = [];
+    announcedGimbalRef.current = false;
+    lastLineChimeRef.current = 0;
     setPointProgress(0);
     setWaitingForValidEye(false);
 
@@ -166,14 +192,31 @@ export const GridCalibrationWizard: React.FC<GridCalibrationWizardProps> = ({
       }
 
       const progress01 = Math.min(1, activeElapsedMs / ORBIT_DURATION_MS);
-      const pos = evaluateLissajousPursuitTarget(progress01);
-      setPursuitPos(pos);
+      const state = evaluateRasterScanPursuitTarget(progress01, 5);
+      setPursuitState(state);
       setPointProgress(progress01 * 100);
+
+      // Subtle audio tick when advancing to a new horizontal scan line
+      if (state.phase === 'raster-scan' && state.lineIndex > lastLineChimeRef.current) {
+        lastLineChimeRef.current = state.lineIndex;
+        playPointChime(523.25 + state.lineIndex * 45);
+      }
+
+      // Announce 2-second 3D Head-Pose Gimbal phase once when entering center hold
+      if (state.phase === 'head-gimbal' && !announcedGimbalRef.current) {
+        announcedGimbalRef.current = true;
+        playPointChime(783.99);
+        onSpeak(
+          currentLanguage === 'en'
+            ? 'Keep your gaze fixed on the center and gently nod or turn your head.'
+            : 'Mantenga la vista fija en el centro y mueva suavemente la cabeza.'
+        );
+      }
 
       if (hasValidCleanEye && cur) {
         const stageRect = stageRef.current?.getBoundingClientRect();
-        const targetScreenX = stageRect ? stageRect.left + pos.xPct * stageRect.width : pos.xPct * window.innerWidth;
-        const targetScreenY = stageRect ? stageRect.top + pos.yPct * stageRect.height : pos.yPct * window.innerHeight;
+        const targetScreenX = stageRect ? stageRect.left + state.xPct * stageRect.width : state.xPct * window.innerWidth;
+        const targetScreenY = stageRect ? stageRect.top + state.yPct * stageRect.height : state.yPct * window.innerHeight;
         pursuitStreamRef.current.push({
           tMs: now,
           targetX: targetScreenX,
@@ -194,7 +237,11 @@ export const GridCalibrationWizard: React.FC<GridCalibrationWizardProps> = ({
         stopAllSounds();
 
         if (pursuitRes) {
-          setPursuitMetrics({ lagMs: pursuitRes.optimalLagMs, r2: pursuitRes.pearsonR2 });
+          setPursuitMetrics({
+            lagMs: pursuitRes.optimalLagMs,
+            r2: pursuitRes.pearsonR2,
+            cells: pursuitRes.rasterCellsCount,
+          });
           setCalibrationStats(pursuitRes.matrix);
           const neutralCenter = {
             x: pursuitRes.samples.reduce((a, s) => a + s.rawPupilX, 0) / pursuitRes.samples.length,
@@ -398,15 +445,15 @@ export const GridCalibrationWizard: React.FC<GridCalibrationWizardProps> = ({
           </div>
         </div>
 
-        {/* QUADRANT MATRIX & SMOOTH-PURSUIT PRESET SELECTOR */}
+        {/* CONTINUOUS LINE-SCAN + 3D HEAD & QUADRANT PRESET SELECTOR */}
         {!calibrationDone && (
           <div className="flex items-center bg-[var(--bg-canvas)] border border-[var(--border-hairline)] rounded-lg p-0.5 text-[11px] font-mono flex-wrap">
             {(
               [
-                { id: '4-corners', es: '4 Esquinas', en: '4 Corners' },
-                { id: '5-quadrant', es: '5 Puntos', en: '5 Points' },
+                { id: 'smooth-pursuit', es: 'Barrido por Líneas + 3D', en: 'Line-Scan + 3D Head' },
                 { id: '9-grid', es: '9 Puntos (Matriz)', en: '9 Points (Grid)' },
-                { id: 'smooth-pursuit', es: 'Órbita Continua (Pursuit)', en: 'Smooth Orbit (Pursuit)' },
+                { id: '5-quadrant', es: '5 Puntos', en: '5 Points' },
+                { id: '4-corners', es: '4 Esquinas', en: '4 Corners' },
               ] as const
             ).map(opt => (
               <button
@@ -431,7 +478,9 @@ export const GridCalibrationWizard: React.FC<GridCalibrationWizardProps> = ({
               <span className="text-[var(--text-secondary)]">
                 {isPursuitMode ? (
                   <>
-                    {currentLanguage === 'en' ? 'Orbit' : 'Órbita'}{' '}
+                    {pursuitState.phase === 'head-gimbal'
+                      ? (currentLanguage === 'en' ? '3D Head' : 'Cabeza 3D')
+                      : (currentLanguage === 'en' ? `Line ${pursuitState.lineIndex + 1}/5` : `Línea ${pursuitState.lineIndex + 1}/5`)}{' '}
                     <strong className="text-[var(--accent-primary)]">{Math.round(pointProgress)}%</strong>
                   </>
                 ) : (
@@ -454,7 +503,7 @@ export const GridCalibrationWizard: React.FC<GridCalibrationWizardProps> = ({
         </div>
       </div>
 
-      {/* FULL-VIEWPORT QUADRANT CALIBRATION STAGE */}
+      {/* FULL-VIEWPORT QUADRANT & RASTER-SCAN CALIBRATION STAGE */}
       <div ref={stageRef} className="relative flex-1 w-full h-full overflow-hidden">
         {!isPursuitMode &&
           activePoints.map((pt, idx) => {
@@ -525,23 +574,76 @@ export const GridCalibrationWizard: React.FC<GridCalibrationWizardProps> = ({
             );
           })}
 
-        {/* SMOOTH-PURSUIT MOVING ORBITAL STIMULUS ("OrbitoGaze") */}
+        {/* BOUSTROPHEDON 5-LINE RASTER GUIDE RAILS */}
+        {isPursuitMode && !calibrationDone && countdown === null && (
+          <div className="absolute inset-0 pointer-events-none">
+            {RASTER_SCAN_LINES.map(line => {
+              const isLineActive = pursuitState.phase === 'raster-scan' && pursuitState.lineIndex === line.row;
+              const isLineDone =
+                pursuitState.phase === 'head-gimbal' ||
+                (pursuitState.phase === 'raster-scan' && pursuitState.lineIndex > line.row);
+
+              return (
+                <div
+                  key={line.row}
+                  style={{
+                    left: '7%',
+                    width: '86%',
+                    top: `${line.yPct * 100}%`,
+                  }}
+                  className="absolute transform -translate-y-1/2 flex items-center justify-between"
+                >
+                  <div
+                    className={`w-full h-[2px] rounded-full transition-colors ${
+                      isLineActive
+                        ? 'bg-[var(--accent-primary)]/55'
+                        : isLineDone
+                        ? 'bg-[var(--accent-primary)]/25'
+                        : 'bg-[var(--border-hairline)]/45'
+                    }`}
+                  />
+                  <span
+                    className={`absolute ${
+                      line.dir === 'ltr' ? 'left-0 -top-4' : 'right-0 -top-4'
+                    } text-[9px] font-mono px-1.5 py-0.2 rounded ${
+                      isLineActive
+                        ? 'text-[var(--accent-primary)] font-semibold'
+                        : isLineDone
+                        ? 'text-[var(--accent-primary)]/60'
+                        : 'text-[var(--text-muted)]/55'
+                    }`}
+                  >
+                    {line.dir === 'ltr' ? `L${line.row + 1} →` : `← L${line.row + 1}`}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        {/* CONTINUOUS LINE-SCAN & 3D HEAD-GIMBAL MOVING STIMULUS */}
         {isPursuitMode && !calibrationDone && countdown === null && (
           <div
             style={{
-              left: `${pursuitPos.xPct * 100}%`,
-              top: `${pursuitPos.yPct * 100}%`,
+              left: `${pursuitState.xPct * 100}%`,
+              top: `${pursuitState.yPct * 100}%`,
             }}
             className="absolute transform -translate-x-1/2 -translate-y-1/2 z-30 flex flex-col items-center pointer-events-none"
           >
-            <div className="relative w-20 h-20 rounded-full bg-[var(--bg-elevated)] border-2 border-[var(--border-active)] flex items-center justify-center shadow-lg">
+            <div
+              className={`relative w-20 h-20 rounded-full bg-[var(--bg-elevated)] border-2 flex items-center justify-center shadow-lg ${
+                pursuitState.phase === 'head-gimbal'
+                  ? 'border-[var(--accent-amber)] ocular-breathe-ring'
+                  : 'border-[var(--border-active)]'
+              }`}
+            >
               <svg className="absolute inset-0 w-20 h-20 transform -rotate-90">
                 <circle cx="40" cy="40" r="34" stroke="rgba(127, 166, 138, 0.2)" strokeWidth="3" fill="none" />
                 <circle
                   cx="40"
                   cy="40"
                   r="34"
-                  stroke="#7FA68A"
+                  stroke={pursuitState.phase === 'head-gimbal' ? '#D4A359' : '#7FA68A'}
                   strokeWidth="4"
                   fill="rgba(127, 166, 138, 0.1)"
                   strokeDasharray={213.6}
@@ -549,22 +651,38 @@ export const GridCalibrationWizard: React.FC<GridCalibrationWizardProps> = ({
                   strokeLinecap="round"
                 />
               </svg>
-              <div className="w-4 h-4 rounded-full bg-[var(--accent-primary)]" />
+              <div
+                className={`w-4 h-4 rounded-full ${
+                  pursuitState.phase === 'head-gimbal' ? 'bg-[var(--accent-amber)] scale-125' : 'bg-[var(--accent-primary)]'
+                }`}
+              />
             </div>
-            <span className="text-[10px] font-mono mt-2 px-2.5 py-0.5 rounded border bg-[var(--bg-elevated)] text-[var(--text-primary)] border-[var(--border-active)] font-semibold whitespace-nowrap">
-              {currentLanguage === 'en' ? 'ORBITO-GAZE · FOLLOW SMOOTHLY' : 'ORBITO-GAZE · SIGA EL CÍRCULO'}
+            <span
+              className={`text-[10px] font-mono mt-2 px-2.5 py-0.5 rounded border bg-[var(--bg-elevated)] font-semibold whitespace-nowrap ${
+                pursuitState.phase === 'head-gimbal'
+                  ? 'text-[var(--accent-amber)] border-[var(--accent-amber)]'
+                  : 'text-[var(--text-primary)] border-[var(--border-active)]'
+              }`}
+            >
+              {pursuitState.phase === 'head-gimbal'
+                ? currentLanguage === 'en'
+                  ? '3D HEAD GIMBAL · KEEP EYES ON CENTER & NOD GENTLY'
+                  : 'MATRIZ 3D CABEZA · MIRADA FIJA Y MUEVA SUAVE LA CABEZA'
+                : currentLanguage === 'en'
+                ? `LINE ${pursuitState.lineIndex + 1}/5 · FOLLOW CURSOR CONTINUOUSLY`
+                : `LÍNEA ${pursuitState.lineIndex + 1}/5 · SIGA EL BARRIDO CONTINUO`}
             </span>
           </div>
         )}
 
         {/* INITIAL COUNTDOWN OVERLAY */}
         {countdown !== null && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-[var(--bg-canvas)]/85 gap-4 animate-in fade-in">
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-[var(--bg-canvas)]/85 gap-4 animate-in fade-in px-4 text-center">
             <span className="text-xs uppercase tracking-[0.16em] font-mono text-[var(--accent-primary)] font-semibold">
               {isPursuitMode
                 ? currentLanguage === 'en'
-                  ? 'Follow the single moving orb smoothly with your eyes (no fixed corner staring)'
-                  : 'Siga suavemente con los ojos el círculo orbital en movimiento (sin esfuerzo en esquinas)'
+                  ? 'Follow the cursor line by line from Top-Left (5 lines in zigzag + 2s 3D head calibration)'
+                  : 'Siga el cursor línea a línea desde Arriba-Izquierda (5 líneas en zigzag + 2s de ajuste 3D de cabeza)'
                 : t.fixatePrompt}
             </span>
             <div className="w-24 h-24 rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-active)] flex items-center justify-center text-4xl font-mono font-bold text-[var(--text-primary)] tabular-nums">
@@ -616,8 +734,8 @@ export const GridCalibrationWizard: React.FC<GridCalibrationWizardProps> = ({
               <p className="text-xs text-[var(--text-secondary)] mt-2 leading-relaxed">
                 {isPursuitMode
                   ? currentLanguage === 'en'
-                    ? `Smooth-pursuit correlation matrix solved continuously across the trajectory for ${activeProfile.name} with automatic ocular latency compensation.`
-                    : `Matriz calibrada por seguimiento orbital continuo (OrbitoGaze) para ${activeProfile.name} con compensación automática de latencia ocular.`
+                    ? `Continuous 5-line Boustrophedon raster matrix and 3D head-pose coupling tensor (Yaw, Pitch, Roll) solved for ${activeProfile.name}.`
+                    : `Matriz densa de barrido continuo por líneas y tensor de acoplamiento 3D de cabeza (Yaw, Pitch, Roll) calculados para ${activeProfile.name}.`
                   : currentLanguage === 'en'
                   ? `Pupil positioning matrix solved across all ${activePoints.length} quadrant anchors for ${activeProfile.name}. Screen edges and keys are now locked with zero residual bias.`
                   : `Matriz de posicionamiento pupilar calculada en todo el cuadrante con ${activePoints.length} puntos para ${activeProfile.name}. Las esquinas, teclas y celdas coinciden ahora con su mirada.`}
@@ -650,6 +768,15 @@ export const GridCalibrationWizard: React.FC<GridCalibrationWizardProps> = ({
                         </span>
                         <span className="text-[var(--accent-amber)] font-semibold text-sm">
                           {pursuitMetrics.lagMs} ms · {pursuitMetrics.r2}
+                        </span>
+                      </div>
+                      <div className="w-[1px] h-7 bg-[var(--border-hairline)]" />
+                      <div className="flex flex-col items-center">
+                        <span className="text-[var(--text-muted)] text-[10px]">
+                          {currentLanguage === 'en' ? '3D Raster Anchors' : 'Anclas Matriz 3D'}
+                        </span>
+                        <span className="text-[var(--accent-primary)] font-semibold text-sm">
+                          {pursuitMetrics.cells} pts · 3D
                         </span>
                       </div>
                     </>

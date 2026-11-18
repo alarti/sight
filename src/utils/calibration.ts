@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { CalibrationSample, CalibrationAlgorithm, QuadrantMatrixSnapshot } from '../types/index.ts';
+import { CalibrationSample, CalibrationAlgorithm, QuadrantMatrixSnapshot, HeadPoseCoupling3D } from '../types/index.ts';
 
 export type QuadrantMatrixModel = QuadrantMatrixSnapshot;
 
@@ -763,6 +763,8 @@ export function fitQuadrantPupilMatrix(
   const solResX = solveLinearSystem(L, bX);
   const solResY = solveLinearSystem(L, bY);
 
+  const learnedHeadCoupling = samples.find(s => s.headCoupling3D)?.headCoupling3D;
+
   const model: QuadrantMatrixModel = {
     regime: 'hybrid-tps',
     meanX,
@@ -788,9 +790,56 @@ export function fitQuadrantPupilMatrix(
     hullMaxU,
     hullMinV,
     hullMaxV,
+    headCoupling3D: learnedHeadCoupling,
   };
   model.rmsePx = computeQuadrantRmse(rawCentroids, model);
   return model;
+}
+
+/**
+ * 3D Head-Pose Differential Pupil Stabilizer:
+ * Cancels pupil-coordinate displacement (\Delta x, \Delta y) caused by subtle 3D cranial rotations
+ * (\Delta\psi = yaw - refYaw, \Delta\theta = pitch - refPitch, \Delta\phi = rollDeg - refRollDeg)
+ * using the learned 2x3 Vestibulo-Ocular / Parallax Jacobian tensor plus in-plane ocular
+ * counter-roll de-rotation around the neutral pupil centroid.
+ * When live head pose matches the reference calibration pose (\Delta\psi = \Delta\theta = \Delta\phi = 0),
+ * the transformation is the exact identity (0.0 px shift).
+ */
+export function stabilizePupilWith3DHeadCoupling(
+  x: number,
+  y: number,
+  yaw: number,
+  pitch: number,
+  rollDeg: number,
+  coupling: HeadPoseCoupling3D,
+  centerPupilX: number = 0.5,
+  centerPupilY: number = 0.5
+): { x: number; y: number } {
+  const dYaw = (Number.isFinite(yaw) ? yaw : coupling.refYaw) - coupling.refYaw;
+  const dPitch = (Number.isFinite(pitch) ? pitch : coupling.refPitch) - coupling.refPitch;
+  const dRollDeg = (Number.isFinite(rollDeg) ? rollDeg : coupling.refRollDeg) - coupling.refRollDeg;
+  const dRollNorm = Math.max(-1.0, Math.min(1.0, dRollDeg / 45.0));
+
+  // 1. In-plane ocular counter-roll de-rotation around neutral pupil center
+  const rollGain = coupling.ocularCounterRollGain ?? 0.12;
+  const thetaRad = -(dRollDeg * Math.PI / 180.0) * rollGain;
+  const cosT = Math.cos(thetaRad);
+  const sinT = Math.sin(thetaRad);
+  const relX = x - centerPupilX;
+  const relY = y - centerPupilY;
+  const rotX = centerPupilX + (relX * cosT - relY * sinT);
+  const rotY = centerPupilY + (relX * sinT + relY * cosT);
+
+  // 2. Subtract 3D Jacobian pupil shift: J_head * [dYaw, dPitch, dRollNorm]^T
+  const [jxYaw, jxPitch, jxRoll] = coupling.jacobianX;
+  const [jyYaw, jyPitch, jyRoll] = coupling.jacobianY;
+  const shiftX = jxYaw * dYaw + jxPitch * dPitch + jxRoll * dRollNorm;
+  const shiftY = jyYaw * dYaw + jyPitch * dPitch + jyRoll * dRollNorm;
+
+  return {
+    x: rotX - shiftX,
+    y: rotY - shiftY,
+  };
 }
 
 function computeQuadrantRmse(
@@ -805,7 +854,8 @@ function computeQuadrantRmse(
       c.rawPupilY,
       c.headYaw ?? 0,
       c.headPitch ?? 0,
-      model
+      model,
+      c.headRoll ?? 0
     );
     sqErr += (pred.x - c.targetX) ** 2 + (pred.y - c.targetY) ** 2;
   }
@@ -813,10 +863,12 @@ function computeQuadrantRmse(
 }
 
 /**
- * Evaluates the Mahalanobis-Whitened Exact Quadrant Positioning Matrix (M-QPM):
- *   1. Repositions the cursor at the exact recorded screen coordinate (X_i, Y_i) whenever
+ * Evaluates the Mahalanobis-Whitened Exact Quadrant Positioning Matrix (M-QPM) + 3D Head Coupling:
+ *   1. If a 3D Head-Pose Coupling Tensor (`headCoupling3D`) was learned during continuous line-scan
+ *      and 3D head-gimbal calibration, stabilizes `(x, y)` against live 3D head rotations `(yaw, pitch, roll)`.
+ *   2. Repositions the cursor at the exact recorded screen coordinate (X_i, Y_i) whenever
  *      the pupil matches a recorded imprint (u_i, v_i).
- *   2. Calculates all other positions by finite differences (\Delta u = u - u_i, \Delta v = v - v_i)
+ *   3. Calculates all other positions by finite differences (\Delta u = u - u_i, \Delta v = v - v_i)
  *      combining the global linear finite-difference Jacobian with zero-residual radial basis
  *      differential interpolation.
  */
@@ -825,10 +877,28 @@ export function evaluateQuadrantPupilMatrix(
   y: number,
   yaw: number = 0,
   pitch: number = 0,
-  model: QuadrantMatrixModel
+  model: QuadrantMatrixModel,
+  roll: number = 0
 ): { x: number; y: number } {
-  const u = (x - model.meanX) / Math.max(1e-5, model.scaleX);
-  const v = (y - model.meanY) / Math.max(1e-5, model.scaleY);
+  let effX = x;
+  let effY = y;
+  if (model.headCoupling3D) {
+    const stabilized = stabilizePupilWith3DHeadCoupling(
+      x,
+      y,
+      yaw,
+      pitch,
+      roll,
+      model.headCoupling3D,
+      model.meanX,
+      model.meanY
+    );
+    effX = stabilized.x;
+    effY = stabilized.y;
+  }
+
+  const u = (effX - model.meanX) / Math.max(1e-5, model.scaleX);
+  const v = (effY - model.meanY) / Math.max(1e-5, model.scaleY);
 
   let baseX: number;
   let baseY: number;
@@ -1339,12 +1409,13 @@ export function evaluateCalibratedGaze(
   yaw: number = 0,
   pitch: number = 0,
   modelOrCoeffs: CalibrationMatrixCoeffs | QuadrantMatrixModel | ThinPlateSplineModel | ProjectiveModel | RbfKernelModel | null | undefined,
-  overrideAlgorithm?: CalibrationAlgorithm
+  overrideAlgorithm?: CalibrationAlgorithm,
+  roll: number = 0
 ): { x: number; y: number } | null {
   if (!modelOrCoeffs) return null;
 
   if ('regime' in modelOrCoeffs && 'controlPointsUV' in modelOrCoeffs) {
-    return evaluateQuadrantPupilMatrix(x, y, yaw, pitch, modelOrCoeffs);
+    return evaluateQuadrantPupilMatrix(x, y, yaw, pitch, modelOrCoeffs, roll);
   }
 
   if ('controlPoints' in modelOrCoeffs && 'weightsX' in modelOrCoeffs) {
@@ -1363,7 +1434,7 @@ export function evaluateCalibratedGaze(
   const activeModel = overrideAlgorithm || coeffs.modelType || 'quadrant-matrix';
 
   if (activeModel === 'quadrant-matrix' && coeffs.quadrantMatrix) {
-    return evaluateQuadrantPupilMatrix(x, y, yaw, pitch, coeffs.quadrantMatrix);
+    return evaluateQuadrantPupilMatrix(x, y, yaw, pitch, coeffs.quadrantMatrix, roll);
   }
   if (activeModel === 'tps' && coeffs.tps) {
     return evaluateThinPlateSpline(x, y, yaw, pitch, coeffs.tps);
@@ -1375,7 +1446,7 @@ export function evaluateCalibratedGaze(
     return evaluatePolynomialGaze(x, y, yaw, pitch, coeffs);
   }
   if (coeffs.quadrantMatrix) {
-    return evaluateQuadrantPupilMatrix(x, y, yaw, pitch, coeffs.quadrantMatrix);
+    return evaluateQuadrantPupilMatrix(x, y, yaw, pitch, coeffs.quadrantMatrix, roll);
   }
   if (coeffs.tps) {
     return evaluateThinPlateSpline(x, y, yaw, pitch, coeffs.tps);
